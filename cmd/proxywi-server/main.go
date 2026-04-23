@@ -82,7 +82,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer store.Close()
 
 	if n, err := store.CountAdmins(ctx); err == nil && n == 0 {
-		log.Info("no admin configured yet — first GUI request will prompt for setup", "gui_domain", cfg.GUIDomain)
+		log.Info("no admin configured yet — first GUI request will prompt for setup", "gui_domain", cfg.MAINDomain)
 	}
 
 	reg := server.NewRegistry()
@@ -119,11 +119,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			httpProxy.ServeHTTP(w, r)
 			return
 		}
-		switch r.URL.Path {
-		case "/ws/control":
-			controlHandler.ServeHTTP(w, r)
-			return
-		case "/healthz":
+		if r.URL.Path == "/healthz" {
 			_, _ = w.Write([]byte("ok"))
 			return
 		}
@@ -136,9 +132,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	guiRouter := guiApp.Router()
+	guiHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ws/control" {
+			controlHandler.ServeHTTP(w, r)
+			return
+		}
+		guiRouter.ServeHTTP(w, r)
+	})
+
 	guiSrv := &http.Server{
-		Addr:              cfg.GUIAddr,
-		Handler:           guiApp.Router(),
+		Addr:              cfg.MAINAddr,
+		Handler:           guiHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -147,6 +152,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	srv.TLSConfig = tlsCfg
+	guiSrv.TLSConfig = tlsCfg
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 3)
@@ -154,17 +160,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		errCh <- serve(srv, cfg, log)
+		errCh <- serve(srv, cfg.ListenAddr, cfg.TLSMode, log)
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		log.Info("gui listening", "addr", cfg.GUIAddr)
-		err := guiSrv.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
+		errCh <- serve(guiSrv, cfg.MAINAddr, cfg.TLSMode, log)
 	}()
 
 	var acmeSrv *http.Server
@@ -188,8 +190,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go func() { defer wg.Done(); runRetentionSweep(ctx, store, log) }()
 
 	log.Info("proxywi server up",
-		"listen", cfg.ListenAddr, "tls", cfg.TLSMode, "gui", cfg.GUIAddr,
-		"gui_domain", cfg.GUIDomain, "proxy_domain", cfg.ProxyDomain,
+		"listen", cfg.ListenAddr, "tls", cfg.TLSMode, "gui", cfg.MAINAddr,
+		"gui_domain", cfg.MAINDomain, "proxy_domain", cfg.ProxyDomain,
 		"retention_days", int(retentionWindow/(24*time.Hour)))
 
 	select {
@@ -211,21 +213,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	return nil
 }
 
-func serve(srv *http.Server, cfg config.Server, log *slog.Logger) error {
-	label := cfg.TLSMode
-	log.Info("listening", "addr", cfg.ListenAddr, "tls", label)
+func serve(srv *http.Server, addr, tlsMode string, log *slog.Logger) error {
+	log.Info("listening", "addr", addr, "tls", tlsMode)
 
-	switch cfg.TLSMode {
+	switch tlsMode {
 	case "off":
 		err := srv.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return err
-	case "manual", "autocert":
-		ln, err := net.Listen("tcp", cfg.ListenAddr)
+	case "on", "manual", "autocert":
+		ln, err := net.Listen("tcp", addr)
 		if err != nil {
-			return fmt.Errorf("listen %s: %w", cfg.ListenAddr, err)
+			return fmt.Errorf("listen %s: %w", addr, err)
 		}
 		tlsLn := tls.NewListener(ln, srv.TLSConfig)
 		err = srv.Serve(tlsLn)
@@ -234,13 +235,28 @@ func serve(srv *http.Server, cfg config.Server, log *slog.Logger) error {
 		}
 		return err
 	}
-	return fmt.Errorf("unknown TLS mode %q", cfg.TLSMode)
+	return fmt.Errorf("unknown TLS mode %q", tlsMode)
 }
 
 func buildTLSConfig(cfg config.Server, log *slog.Logger) (*tls.Config, http.Handler, error) {
 	switch cfg.TLSMode {
 	case "off":
 		return nil, nil, nil
+	case "on":
+		certPath, keyPath, err := ensureSelfSignedCert(cfg.TLSCacheDir, cfg.MAINDomain, cfg.ProxyDomain)
+		if err != nil {
+			return nil, nil, fmt.Errorf("self-signed cert: %w", err)
+		}
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("load self-signed keypair: %w", err)
+		}
+		log.Info("self-signed tls cert ready", "cert", certPath)
+		return &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+			NextProtos:   []string{"http/1.1"},
+		}, nil, nil
 	case "manual":
 		cert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
 		if err != nil {
@@ -252,7 +268,7 @@ func buildTLSConfig(cfg config.Server, log *slog.Logger) (*tls.Config, http.Hand
 			NextProtos:   []string{"http/1.1"},
 		}, nil, nil
 	case "autocert":
-		hosts := []string{cfg.GUIDomain, cfg.ProxyDomain}
+		hosts := []string{cfg.MAINDomain, cfg.ProxyDomain}
 		mgr := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
 			HostPolicy: autocert.HostWhitelist(hosts...),

@@ -340,7 +340,7 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 	if tok := r.URL.Query().Get("token"); tok != "" {
 		if id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64); err == nil {
 			if c, _ := g.Store.ClientByID(ctx, id); c != nil {
-				data["NewCompose"] = buildCompose(c.Name, g.Cfg.ProxyDomain, tok)
+				data["NewCompose"] = buildCompose(c.Name, controlURL(r), tok)
 				data["NewComposeName"] = c.Name
 			}
 		}
@@ -348,14 +348,31 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 	g.render(w, r, "clients.html", data)
 }
 
-func buildCompose(clientName, proxyDomain, token string) string {
+// controlURL returns the base WSS URL agents should dial (without path). The
+// client binary appends "/ws/control" itself, so we only emit scheme+host.
+// Derived from the incoming request so the generated compose matches whatever
+// host/port/scheme the admin is actually browsing with (reverse proxy on :443,
+// direct :3000, custom port, http in dev — all work).
+func controlURL(r *http.Request) string {
+	scheme := "ws"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "wss"
+	}
+	host := r.Host
+	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+		host = fh
+	}
+	return scheme + "://" + host
+}
+
+func buildCompose(clientName, controlURL, token string) string {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "services:\n")
 	fmt.Fprintf(&b, "  proxywi-client:\n")
 	fmt.Fprintf(&b, "    image: ghcr.io/butialabs/proxywi-client:latest\n")
 	fmt.Fprintf(&b, "    restart: unless-stopped\n")
 	fmt.Fprintf(&b, "    environment:\n")
-	fmt.Fprintf(&b, "      PROXYWI_SERVER: %q\n", "wss://"+proxyDomain)
+	fmt.Fprintf(&b, "      PROXYWI_SERVER: %q\n", controlURL)
 	fmt.Fprintf(&b, "      PROXYWI_TOKEN:  %q\n", token)
 	fmt.Fprintf(&b, "      PROXYWI_CLIENT_NAME: %q\n", clientName)
 	return b.String()
@@ -438,7 +455,7 @@ func (g *GUI) getClientCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte(buildCompose(c.Name, g.Cfg.ProxyDomain, composeTokenPlaceholder)))
+	_, _ = w.Write([]byte(buildCompose(c.Name, controlURL(r), composeTokenPlaceholder)))
 }
 
 func (g *GUI) postDeleteClient(w http.ResponseWriter, r *http.Request) {

@@ -8,8 +8,8 @@ import (
 
 type Server struct {
 	ListenAddr  string
-	GUIAddr     string
-	GUIDomain   string
+	MAINAddr     string
+	MAINDomain   string
 	ProxyDomain string
 	DataDir     string
 	TLSMode     string
@@ -27,20 +27,20 @@ type Client struct {
 
 func LoadServer() (Server, error) {
 	s := Server{
-		ListenAddr:  env("PROXYWI_LISTEN_ADDR", ":7443"),
-		GUIAddr:     env("PROXYWI_GUI_ADDR", ":3000"),
-		GUIDomain:   env("PROXYWI_GUI_DOMAIN", "proxywi.xyz"),
+		ListenAddr:  env("PROXYWI_PROXY_ADDR", ":7443"),
+		MAINAddr:    env("PROXYWI_MAIN_ADDR", ":3000"),
+		MAINDomain:  env("PROXYWI_MAIN_DOMAIN", "proxywi.xyz"),
 		ProxyDomain: env("PROXYWI_PROXY_DOMAIN", "pomar.proxywi.xyz"),
 		DataDir:     env("PROXYWI_DATA_DIR", "./data"),
-		TLSMode:     env("PROXYWI_TLS_MODE", "off"),
+		TLSMode:     env("PROXYWI_TLS_MODE", "on"),
 		TLSCertFile: os.Getenv("PROXYWI_TLS_CERT_FILE"),
 		TLSKeyFile:  os.Getenv("PROXYWI_TLS_KEY_FILE"),
 		TLSCacheDir: env("PROXYWI_TLS_CACHE_DIR", "./data/acme"),
 		ACMEEmail:   os.Getenv("PROXYWI_ACME_EMAIL"),
 	}
-	valid := map[string]bool{"off": true, "autocert": true, "manual": true}
+	valid := map[string]bool{"off": true, "on": true, "autocert": true, "manual": true}
 	if !valid[s.TLSMode] {
-		return s, fmt.Errorf("PROXYWI_TLS_MODE=%q invalid (off|autocert|manual)", s.TLSMode)
+		return s, fmt.Errorf("PROXYWI_TLS_MODE=%q invalid (off|on|autocert|manual)", s.TLSMode)
 	}
 	if s.TLSMode == "manual" && (s.TLSCertFile == "" || s.TLSKeyFile == "") {
 		return s, fmt.Errorf("PROXYWI_TLS_MODE=manual requires PROXYWI_TLS_CERT_FILE and PROXYWI_TLS_KEY_FILE")
