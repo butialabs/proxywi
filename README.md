@@ -74,7 +74,7 @@ Within a few seconds the client shows as **online** in the dashboard.
 
 ```bash
 # HTTPS proxy - TLS to the proxy, then CONNECT tunnel to the target
-curl -x https://user:pass@pomar.proxywi.xyz:7443 https://ifconfig.me/ip
+curl -k --proxy-insecure -x https://user:pass@pomar.proxywi.xyz:7443 https://ifconfig.me/ip
 ```
 
 If you expose port `443` externally (reverse proxy on `443` → container `7443`):
@@ -118,9 +118,10 @@ sudo chmod -R 755 ./data
 
 | Variable                | Default    | Purpose |
 |-------------------------|------------|---------|
-| `PROXYWI_SERVER`       | *required* | e.g. `wss://proxywi.xyz` points at `PROXYWI_MAIN_DOMAIN`, not the proxy domain. |
-| `PROXYWI_TOKEN`        | *required* | Token from the GUI, shown once at enrollment |
-| `PROXYWI_CLIENT_NAME`  | hostname   | Display name in the GUI |
+| `PROXYWI_SERVER`        | *required* | e.g. `wss://proxywi.xyz` points at `PROXYWI_MAIN_DOMAIN`, not the proxy domain. |
+| `PROXYWI_TOKEN`         | *required* | Token from the GUI, shown once at enrollment |
+| `PROXYWI_CLIENT_NAME`   | hostname   | Display name in the GUI |
+| `PROXYWI_TLS_INSECURE`  | `false`    | Skip TLS verification when dialing the control plane. Required when the server is on `TLS_MODE=on` (self-signed) and the agent doesn't have the server cert in its trust store. |
 
 ---
 

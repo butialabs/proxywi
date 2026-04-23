@@ -82,7 +82,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer store.Close()
 
 	if n, err := store.CountAdmins(ctx); err == nil && n == 0 {
-		log.Info("no admin configured yet — first GUI request will prompt for setup", "gui_domain", cfg.MAINDomain)
+		log.Info("no admin configured yet — first GUI request will prompt for setup", "main_domain", cfg.MAINDomain)
 	}
 
 	reg := server.NewRegistry()
@@ -190,8 +190,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go func() { defer wg.Done(); runRetentionSweep(ctx, store, log) }()
 
 	log.Info("proxywi server up",
-		"listen", cfg.ListenAddr, "tls", cfg.TLSMode, "gui", cfg.MAINAddr,
-		"gui_domain", cfg.MAINDomain, "proxy_domain", cfg.ProxyDomain,
+		"listen", cfg.ListenAddr, "tls", cfg.TLSMode, "main", cfg.MAINAddr,
+		"main_domain", cfg.MAINDomain, "proxy_domain", cfg.ProxyDomain,
 		"retention_days", int(retentionWindow/(24*time.Hour)))
 
 	select {

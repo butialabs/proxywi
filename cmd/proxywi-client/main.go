@@ -34,10 +34,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	serverURL := strings.TrimRight(cfg.Server, "/")
 	agent := &client.Agent{
-		ServerURL: serverURL,
-		Token:     cfg.Token,
-		Name:      cfg.Name,
-		Log:       log,
+		ServerURL:   serverURL,
+		Token:       cfg.Token,
+		Name:        cfg.Name,
+		TLSInsecure: cfg.TLSInsecure,
+		Log:         log,
 	}
 
 	backoff := time.Second

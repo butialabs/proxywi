@@ -3,6 +3,7 @@ package client
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,17 +21,26 @@ import (
 )
 
 type Agent struct {
-	ServerURL string
-	Token     string
-	Name      string
-	Log       *slog.Logger
+	ServerURL   string
+	Token       string
+	Name        string
+	TLSInsecure bool
+	Log         *slog.Logger
 }
 
 func (a *Agent) Run(ctx context.Context) error {
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	ws, resp, err := websocket.Dial(dialCtx, a.ServerURL+"/ws/control", &websocket.DialOptions{})
+	dialOpts := &websocket.DialOptions{}
+	if a.TLSInsecure {
+		dialOpts.HTTPClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	}
+	ws, resp, err := websocket.Dial(dialCtx, a.ServerURL+"/ws/control", dialOpts)
 	if err != nil {
 		return fmt.Errorf("ws dial: %w", err)
 	}

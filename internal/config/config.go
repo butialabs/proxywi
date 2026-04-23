@@ -20,9 +20,10 @@ type Server struct {
 }
 
 type Client struct {
-	Server string
-	Token  string
-	Name   string
+	Server       string
+	Token        string
+	Name         string
+	TLSInsecure  bool
 }
 
 func LoadServer() (Server, error) {
@@ -50,9 +51,10 @@ func LoadServer() (Server, error) {
 
 func LoadClient() (Client, error) {
 	c := Client{
-		Server: os.Getenv("PROXYWI_SERVER"),
-		Token:  os.Getenv("PROXYWI_TOKEN"),
-		Name:   env("PROXYWI_CLIENT_NAME", hostname()),
+		Server:      os.Getenv("PROXYWI_SERVER"),
+		Token:       os.Getenv("PROXYWI_TOKEN"),
+		Name:        env("PROXYWI_CLIENT_NAME", hostname()),
+		TLSInsecure: boolEnv("PROXYWI_TLS_INSECURE"),
 	}
 	if c.Server == "" {
 		return c, fmt.Errorf("PROXYWI_SERVER is required")
@@ -71,6 +73,14 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func boolEnv(key string) bool {
+	switch strings.ToLower(os.Getenv(key)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func hostname() string {

@@ -12,7 +12,7 @@ services:
       PROXYWI_MAIN_DOMAIN:   "proxywi.xyz"
       PROXYWI_PROXY_DOMAIN: "pomar.proxywi.xyz"
       PROXYWI_DATA_DIR:     "/data"
-      PROXYWI_TLS_MODE:     "off"
+      PROXYWI_TLS_MODE:     "on"
     volumes:
       - ./dev/data:/data
     ports:
@@ -29,6 +29,7 @@ services:
     depends_on:
       - proxywi-server
     environment:
-      PROXYWI_SERVER:      "ws://proxywi-server:3000"
-      PROXYWI_TOKEN:       ""
-      PROXYWI_CLIENT_NAME: "dev-client"
+      PROXYWI_SERVER:        "wss://proxywi-server:3000"
+      PROXYWI_TOKEN:         ""
+      PROXYWI_CLIENT_NAME:   "dev-client"
+      PROXYWI_TLS_INSECURE:  "true"
