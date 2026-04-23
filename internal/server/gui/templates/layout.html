@@ -1,0 +1,88 @@
+{{define "layout"}}<!doctype html>
+<html lang="{{.Lang}}" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} · {{t "app.name"}}</title>
+
+  <link rel="icon" type="image/svg+xml" href="/dist/img/kiwi.svg">
+  <link rel="shortcut icon" type="image/svg+xml" href="/dist/img/kiwi.svg">
+
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate, nocache">
+  <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+  <meta name="bingbot" content="noindex, nofollow, noarchive, nosnippet">
+  <meta name="googlebot-news" content="noindex, nofollow">
+  <meta name="slurp" content="noindex, nofollow">
+  <meta name="duckduckbot" content="noindex, nofollow">
+  <meta name="yandex" content="noindex, nofollow, noarchive">
+  <meta name="baiduspider" content="noindex, nofollow, noarchive">
+
+  <meta name="GPTBot" content="noindex, nofollow">
+  <meta name="ChatGPT-User" content="noindex, nofollow">
+  <meta name="OAI-SearchBot" content="noindex, nofollow">
+  <meta name="ClaudeBot" content="noindex, nofollow">
+  <meta name="Claude-Web" content="noindex, nofollow">
+  <meta name="anthropic-ai" content="noindex, nofollow">
+  <meta name="PerplexityBot" content="noindex, nofollow">
+  <meta name="Perplexity-User" content="noindex, nofollow">
+  <meta name="CCBot" content="noindex, nofollow">
+  <meta name="Google-Extended" content="noindex, nofollow">
+  <meta name="Applebot" content="noindex, nofollow">
+  <meta name="Applebot-Extended" content="noindex, nofollow">
+  <meta name="Bytespider" content="noindex, nofollow">
+  <meta name="Amazonbot" content="noindex, nofollow">
+  <meta name="Meta-ExternalAgent" content="noindex, nofollow">
+  <meta name="FacebookBot" content="noindex, nofollow">
+  <meta name="cohere-ai" content="noindex, nofollow">
+  <meta name="Diffbot" content="noindex, nofollow">
+  <meta name="ImagesiftBot" content="noindex, nofollow">
+  <meta name="Omgilibot" content="noindex, nofollow">
+  <meta name="YouBot" content="noindex, nofollow">
+
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="X-Robots-Tag" content="noindex, nofollow, noarchive, nosnippet">
+
+  <style>{{appCSS}}</style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg bg-body-tertiary border-bottom border-secondary-subtle">
+  <div class="container-fluid">
+    <a class="navbar-brand d-flex align-items-center me-1" href="/">
+      <img src="/dist/img/kiwi.svg" alt="" width="28" height="28" class="brand-logo">
+    </a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav"
+            aria-controls="mainNav" aria-expanded="false" aria-label="{{t "nav.toggle"}}">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="mainNav">
+      {{if .User}}
+      <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+        <li class="nav-item"><a class="nav-link {{if eq .Active "dashboard"}}active{{end}}" href="/"><i class="bi bi-speedometer2 me-1"></i>{{t "nav.dashboard"}}</a></li>
+        <li class="nav-item"><a class="nav-link {{if eq .Active "clients"}}active{{end}}" href="/clients"><i class="bi bi-hdd-network me-1"></i>{{t "nav.clients"}}</a></li>
+        <li class="nav-item"><a class="nav-link {{if eq .Active "access"}}active{{end}}" href="/access"><i class="bi bi-file-earmark-lock me-1"></i>{{t "nav.access"}}</a></li>
+        <li class="nav-item"><a class="nav-link {{if eq .Active "logs"}}active{{end}}" href="/logs"><i class="bi bi-journal-text me-1"></i>{{t "nav.logs"}}</a></li>
+        <li class="nav-item"><a class="nav-link {{if eq .Active "security"}}active{{end}}" href="/security"><i class="bi bi-shield-lock me-1"></i>{{t "nav.security"}}</a></li>
+      </ul>
+      <form class="d-flex flex-column flex-lg-row align-items-stretch align-items-lg-center gap-2" method="post" action="/logout">
+        <select class="form-select form-select-sm" onchange="document.cookie='lang='+this.value+';path=/;max-age=31536000';location.reload()">
+          {{range .Langs}}<option value="{{.Tag}}" {{if eq .Tag $.Lang}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+        <button class="btn btn-sm btn-outline-secondary d-flex" type="submit"><i class="bi bi-x-square me-2"></i><span class="text-nowrap">{{t "nav.signout"}}</spans></button>
+      </form>
+      {{else}}
+      <form class="d-flex ms-lg-auto">
+        <select class="form-select form-select-sm" onchange="document.cookie='lang='+this.value+';path=/;max-age=31536000';location.reload()">
+          {{range .Langs}}<option value="{{.Tag}}" {{if eq .Tag $.Lang}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </form>
+      {{end}}
+    </div>
+  </div>
+</nav>
+<main class="container py-4">
+  {{if .Flash}}<div class="alert alert-{{.FlashKind}} d-flex align-items-center"><i class="bi bi-info-circle me-2"></i><span>{{.Flash}}</span></div>{{end}}
+  {{template "content" .}}
+</main>
+<script>{{appJS}}</script>
+</body>
+</html>{{end}}

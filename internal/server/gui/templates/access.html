@@ -1,0 +1,73 @@
+{{define "content"}}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h3 class="mb-0">{{t "access.title"}}</h3>
+  <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#newAccess"><i class="bi bi-plus-lg me-1"></i>{{t "access.new"}}</button>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th>{{t "access.col_id"}}</th>
+          <th>{{t "access.col_user"}}</th>
+          <th>{{t "access.col_allowed_cidrs"}}</th>
+          <th>{{t "access.col_created"}}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Accesses}}
+        <tr>
+          <td class="text-body-secondary">{{.ID}}</td>
+          <td class="fw-semibold">{{.Username}}</td>
+          <td>{{if .AllowedSourceCIDRs}}{{range .AllowedSourceCIDRs}}<code class="me-1">{{.}}</code>{{end}}{{else}}<span class="badge bg-secondary-subtle text-body-secondary">{{t "access.any_source"}}</span>{{end}}</td>
+          <td class="text-body-secondary small">{{.CreatedHuman}}</td>
+          <td class="text-end text-nowrap">
+            <button type="button" class="btn btn-sm btn-outline-primary"
+                    title="{{t "access.action_edit"}}"
+                    data-bs-toggle="modal" data-bs-target="#editAccess"
+                    data-access-id="{{.ID}}"
+                    data-access-username="{{.Username}}"
+                    data-access-cidrs="{{.CIDRsCSV}}">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <form method="post" action="/access/{{.ID}}/delete" class="d-inline" onsubmit="return confirm('{{tp "access.confirm_delete" .}}');">
+              <button class="btn btn-sm btn-outline-danger" title="{{t "access.action_delete"}}"><i class="bi bi-trash"></i></button>
+            </form>
+          </td>
+        </tr>
+      {{else}}
+        <tr><td colspan="5" class="text-center text-body-secondary p-4">{{t "access.empty"}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal fade" id="newAccess" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form method="post" action="/access/new">
+    <div class="modal-header"><h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>{{t "access.modal_title"}}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <div class="mb-3"><label class="form-label">{{t "access.field_username"}}</label><input class="form-control" name="username" required></div>
+      <div class="mb-3"><label class="form-label">{{t "access.field_password"}}</label><input type="password" class="form-control" name="password" required></div>
+      <div class="mb-0"><label class="form-label">{{t "access.field_cidrs"}}</label><input class="form-control" name="cidrs" placeholder="200.10.0.0/16,203.0.113.5/32"></div>
+    </div>
+    <div class="modal-footer"><button type="submit" class="btn btn-success">{{t "access.create"}}</button></div>
+  </form>
+</div></div></div>
+
+<div class="modal fade" id="editAccess" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form method="post" id="editAccessForm">
+    <div class="modal-header"><h5 class="modal-title"><i class="bi bi-pencil me-2"></i>{{t "access.edit_modal_title"}}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <div class="mb-3"><label class="form-label">{{t "access.field_username"}}</label><input class="form-control" name="username" id="editAccessUsername" required></div>
+      <div class="mb-3"><label class="form-label">{{t "access.field_password_optional"}}</label><input type="password" class="form-control" name="password" id="editAccessPassword" autocomplete="new-password"></div>
+      <div class="mb-0"><label class="form-label">{{t "access.field_cidrs"}}</label><input class="form-control" name="cidrs" id="editAccessCidrs" placeholder="200.10.0.0/16,203.0.113.5/32"></div>
+    </div>
+    <div class="modal-footer"><button type="submit" class="btn btn-primary">{{t "access.save"}}</button></div>
+  </form>
+</div></div></div>
+
+{{end}}
+{{template "layout" .}}

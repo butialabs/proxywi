@@ -1,0 +1,58 @@
+{{define "content"}}
+<h3 class="mb-3">{{t "security.title"}}</h3>
+
+<div class="card mb-4">
+  <div class="card-header bg-body-tertiary d-flex align-items-center">
+    <i class="bi bi-slash-circle me-2"></i>
+    <strong>{{t "security.active_bans"}}</strong>
+    {{if .ActiveBans}}<span class="ms-auto badge bg-danger-subtle text-danger-emphasis">{{len .ActiveBans}}</span>{{end}}
+  </div>
+  <div class="table-responsive">
+    {{if .ActiveBans}}
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr class="text-body-secondary small text-uppercase">
+          <th>{{t "security.col_ip"}}</th>
+          <th>{{t "security.col_reason"}}</th>
+          <th>{{t "security.col_failures"}}</th>
+          <th>{{t "security.col_expires"}}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .ActiveBans}}
+        <tr>
+          <td><code>{{.SourceIP}}</code></td>
+          <td>{{.Reason}}</td>
+          <td>{{.FailureCount}}</td>
+          <td class="text-body-secondary small">{{.ExpiresHuman}}</td>
+          <td class="text-end">
+            <form method="post" action="/security/unban" class="d-inline">
+              <input type="hidden" name="ip" value="{{.SourceIP}}">
+              <button class="btn btn-sm btn-outline-secondary" title="{{t "security.action_unban"}}"><i class="bi bi-unlock"></i></button>
+            </form>
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<div class="card-body text-center text-body-secondary"><i class="bi bi-shield-check fs-1 d-block mb-2 opacity-50"></i>{{t "security.no_bans"}}</div>{{end}}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header bg-body-tertiary d-flex align-items-center">
+    <i class="bi bi-ban me-2"></i>
+    <strong>{{t "security.manual_ban_title"}}</strong>
+  </div>
+  <div class="card-body">
+    <form method="post" action="/security/ban" class="row g-2">
+      <div class="col-md-4"><input class="form-control" name="ip" placeholder="{{t "security.field_ip_ph"}}" required></div>
+      <div class="col-md-2"><input class="form-control" name="hours" type="number" value="24" min="1" title="hours"></div>
+      <div class="col-md"><input class="form-control" name="reason" placeholder="{{t "security.field_reason_ph"}}"></div>
+      <div class="col-auto"><button class="btn btn-danger"><i class="bi bi-ban me-1"></i>{{t "security.ban"}}</button></div>
+    </form>
+  </div>
+</div>
+{{end}}
+{{template "layout" .}}

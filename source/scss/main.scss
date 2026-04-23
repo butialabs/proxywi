@@ -1,0 +1,26 @@
+@use "bootstrap/scss/bootstrap" as *;
+@use "bootstrap-icons/font/bootstrap-icons" with (
+  $bootstrap-icons-font-src: (
+    url("/dist/fonts/bootstrap-icons.woff2") format("woff2"),
+    url("/dist/fonts/bootstrap-icons.woff") format("woff")
+  )
+);
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bs-body-bg);
+}
+
+.brand-logo {
+  filter: invert(1);
+}
+
+textarea.compose {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .8rem;
+    white-space: pre;
+    background: var(--bs-tertiary-bg);
+}

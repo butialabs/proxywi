@@ -1,0 +1,289 @@
+name: release
+
+# v*-server  → publishes proxywi-server only
+# v*-client  → publishes proxywi-client only
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*-server"
+      - "v*-client"
+  workflow_dispatch:
+    inputs:
+      component:
+        description: "Which image to build"
+        required: true
+        default: "both"
+        type: choice
+        options: [both, server, client]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26" }
+      - run: go vet ./...
+      - run: go test ./...
+
+  decide:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      server_build: ${{ steps.out.outputs.server_build }}
+      client_build: ${{ steps.out.outputs.client_build }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect path changes (branch pushes only)
+        id: changed
+        if: github.ref_type == 'branch'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            server:
+              - 'cmd/proxywi-server/**'
+              - 'internal/config/**'
+              - 'internal/i18n/**'
+              - 'internal/server/**'
+              - 'internal/storage/**'
+              - 'internal/tunnel/**'
+              - 'docker/server/**'
+              - 'go.mod'
+              - 'go.sum'
+            client:
+              - 'cmd/proxywi-client/**'
+              - 'internal/config/**'
+              - 'internal/client/**'
+              - 'internal/tunnel/**'
+              - 'docker/client/**'
+              - 'go.mod'
+              - 'go.sum'
+
+      - name: Resolve build flags
+        id: out
+        env:
+          COMPONENT_INPUT: ${{ inputs.component }}
+        run: |
+          server=false; client=false
+          case "${{ github.event_name }}" in
+            workflow_dispatch)
+              [[ "$COMPONENT_INPUT" == "both" || "$COMPONENT_INPUT" == "server" ]] && server=true
+              [[ "$COMPONENT_INPUT" == "both" || "$COMPONENT_INPUT" == "client" ]] && client=true
+              ;;
+            push)
+              if [[ "${{ github.ref_type }}" == "tag" ]]; then
+                [[ "${{ github.ref_name }}" == *"-server" ]] && server=true
+                [[ "${{ github.ref_name }}" == *"-client" ]] && client=true
+              else
+                [[ "${{ steps.changed.outputs.server }}" == "true" ]] && server=true
+                [[ "${{ steps.changed.outputs.client }}" == "true" ]] && client=true
+              fi
+              ;;
+          esac
+          echo "server_build=$server" >> "$GITHUB_OUTPUT"
+          echo "client_build=$client" >> "$GITHUB_OUTPUT"
+          echo "server=$server client=$client"
+
+  # SERVER
+  server-build:
+    needs: decide
+    if: needs.decide.outputs.server_build == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/server/Dockerfile
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-server,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=server-${{ matrix.arch }}
+          cache-to:   type=gha,mode=max,scope=server-${{ matrix.arch }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-server-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  server-merge:
+    needs: server-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-server-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-server
+          tags: |
+            type=match,pattern=v(.*)-server,group=1,enable=${{ github.ref_type == 'tag' }}
+            type=match,pattern=v(.*)-server,group=1,prefix=v,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=sha,prefix=sha-,enable=${{ github.ref_type == 'branch' }}
+            type=raw,value=edge,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - name: Create manifest list
+        working-directory: /tmp/digests
+        run: |
+          tags=$(jq -cr '.tags | map("--tag " + .) | join(" ")' <<< "${DOCKER_METADATA_OUTPUT_JSON}")
+          refs=""
+          for f in *; do
+            refs="$refs ${REGISTRY}/${IMAGE_OWNER}/proxywi-server@$(cat "$f")"
+          done
+          docker buildx imagetools create $tags $refs
+
+      - name: Inspect
+        run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-server:${{ steps.meta.outputs.version }}
+
+  # CLIENT
+  client-build:
+    needs: decide
+    if: needs.decide.outputs.client_build == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/client/Dockerfile
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-client,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=client-${{ matrix.arch }}
+          cache-to:   type=gha,mode=max,scope=client-${{ matrix.arch }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-client-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  client-merge:
+    needs: client-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-client-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-client
+          tags: |
+            type=match,pattern=v(.*)-client,group=1,enable=${{ github.ref_type == 'tag' }}
+            type=match,pattern=v(.*)-client,group=1,prefix=v,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=sha,prefix=sha-,enable=${{ github.ref_type == 'branch' }}
+            type=raw,value=edge,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - name: Create manifest list
+        working-directory: /tmp/digests
+        run: |
+          tags=$(jq -cr '.tags | map("--tag " + .) | join(" ")' <<< "${DOCKER_METADATA_OUTPUT_JSON}")
+          refs=""
+          for f in *; do
+            refs="$refs ${REGISTRY}/${IMAGE_OWNER}/proxywi-client@$(cat "$f")"
+          done
+          docker buildx imagetools create $tags $refs
+
+      - name: Inspect
+        run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-client:${{ steps.meta.outputs.version }}

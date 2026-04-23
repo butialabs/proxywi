@@ -1,0 +1,80 @@
+{{define "content"}}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h3 class="mb-0">{{t "logs.title"}}</h3>
+  <div class="d-flex align-items-center gap-2">
+    <span class="badge bg-body-tertiary border text-body-secondary" id="logs-status">
+      <span class="spinner-border spinner-border-sm me-1" style="width:.75rem;height:.75rem;"></span>
+      <span id="logs-status-text">{{t "logs.connecting"}}</span>
+    </span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header bg-body-tertiary d-flex align-items-center flex-wrap gap-2">
+    <strong>{{t "logs.live"}}</strong>
+    <span class="ms-2 text-body-secondary small">{{tp "logs.total_count" .}}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="bg-body">
+        <tr class="text-body-secondary small text-uppercase">
+          <th>{{t "logs.col_time"}}</th>
+          <th>{{t "logs.col_outcome"}}</th>
+          <th>{{t "logs.col_proto"}}</th>
+          <th>{{t "logs.col_source"}}</th>
+          <th>{{t "logs.col_user"}}</th>
+          <th>{{t "logs.col_client"}}</th>
+          <th>{{t "logs.col_target"}}</th>
+          <th class="text-end">{{t "logs.col_in"}}</th>
+          <th class="text-end">{{t "logs.col_out"}}</th>
+          <th class="text-end">{{t "logs.col_duration"}}</th>
+        </tr>
+      </thead>
+      <tbody id="logs-tbody">
+      {{range .Events}}
+        <tr data-id="{{.ID}}">
+          <td class="text-body-secondary small font-monospace">{{.TSHuman}}</td>
+          <td>
+            {{if eq .Outcome "ok"}}<span class="badge bg-success-subtle text-success-emphasis"><i class="bi bi-check-circle me-1"></i>ok</span>
+            {{else if eq .Outcome "denied"}}<span class="badge bg-warning-subtle text-warning-emphasis"><i class="bi bi-slash-circle me-1"></i>denied</span>
+            {{else}}<span class="badge bg-danger-subtle text-danger-emphasis"><i class="bi bi-x-circle me-1"></i>{{.Outcome}}</span>{{end}}
+          </td>
+          <td><span class="badge bg-body-secondary text-body-emphasis">{{.Protocol}}</span></td>
+          <td><code>{{.SourceIP}}</code></td>
+          <td>{{.User}}</td>
+          <td>{{.ClientName}}</td>
+          <td class="text-truncate" style="max-width:320px;"><code>{{.Target}}</code></td>
+          <td class="text-end font-monospace">{{.BytesInH}}</td>
+          <td class="text-end font-monospace">{{.BytesOutH}}</td>
+          <td class="text-end font-monospace text-body-secondary">{{.DurationMS}} ms</td>
+        </tr>
+      {{else}}
+        <tr id="logs-empty"><td colspan="10" class="text-center text-body-secondary p-4"><i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>{{t "logs.empty"}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{if gt .TotalPages 1}}
+  <div class="card-footer d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span class="text-body-secondary small">{{tp "logs.page_status" .}}</span>
+    <nav>
+      <ul class="pagination pagination-sm mb-0">
+        <li class="page-item {{if not .HasPrev}}disabled{{end}}">
+          <a class="page-link" {{if .HasPrev}}href="?page={{.PrevPage}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+            <i class="bi bi-chevron-left"></i> {{t "logs.page_prev"}}
+          </a>
+        </li>
+        <li class="page-item {{if not .HasNext}}disabled{{end}}">
+          <a class="page-link" {{if .HasNext}}href="?page={{.NextPage}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+            {{t "logs.page_next"}} <i class="bi bi-chevron-right"></i>
+          </a>
+        </li>
+      </ul>
+    </nav>
+  </div>
+  {{end}}
+</div>
+
+<script id="logs-data" type="application/json">{{json .LogsData}}</script>
+{{end}}
+{{template "layout" .}}

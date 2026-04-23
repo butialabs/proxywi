@@ -1,0 +1,34 @@
+services:
+  proxywi-server:
+    container_name: proxywi-server
+    build:
+      context: .
+      dockerfile: docker/server/Dockerfile
+    image: proxywi-server:dev
+    restart: unless-stopped
+    environment:
+      PROXYWI_LISTEN_ADDR:  ":7443"
+      PROXYWI_GUI_ADDR:     ":3000"
+      PROXYWI_GUI_DOMAIN:   "proxywi.xyz"
+      PROXYWI_PROXY_DOMAIN: "pomar.proxywi.xyz"
+      PROXYWI_DATA_DIR:     "/data"
+      PROXYWI_TLS_MODE:     "off"
+    volumes:
+      - ./dev/data:/data
+    ports:
+      - "7443:7443"
+      - "3000:3000"
+
+  proxywi-client:
+    container_name: proxywi-client
+    build:
+      context: .
+      dockerfile: docker/client/Dockerfile
+    image: proxywi-client:dev
+    restart: unless-stopped
+    depends_on:
+      - proxywi-server
+    environment:
+      PROXYWI_SERVER:      "ws://proxywi-server:7443"
+      PROXYWI_TOKEN:       ""
+      PROXYWI_CLIENT_NAME: "dev-client"

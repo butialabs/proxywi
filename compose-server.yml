@@ -1,0 +1,22 @@
+# proxywi.xyz        → :3000  (Admin GUI)
+# pomar.proxywi.xyz  → :7443  (HTTPS proxy + WSS control)
+# Put a TLS-terminating reverse proxy in front (default) OR set
+# PROXYWI_TLS_MODE=manual|autocert to let proxywi serve TLS on :7443 directly.
+
+services:
+  proxywi-server:
+    container_name: proxywi-server
+    image: ghcr.io/butialabs/proxywi-server:latest
+    restart: unless-stopped
+    environment:
+      PROXYWI_LISTEN_ADDR:  ":7443"
+      PROXYWI_GUI_ADDR:     ":3000"
+      PROXYWI_GUI_DOMAIN:   "proxywi.xyz"
+      PROXYWI_PROXY_DOMAIN: "pomar.proxywi.xyz"
+      PROXYWI_DATA_DIR:     "/data"
+      PROXYWI_TLS_MODE:     "off"
+    volumes:
+      - ./proxywi/data:/data
+    ports:
+      - "7443:7443"
+      - "3000:3000"

@@ -1,0 +1,28 @@
+{{define "content"}}
+<div class="row justify-content-center">
+  <div class="col-md-5 col-lg-4">
+    <div class="card shadow-sm border-secondary-subtle mt-4">
+      <div class="card-body p-4">
+        <form method="post" action="/login">
+          <div class="mb-3">
+            <label class="form-label">{{t "login.username"}}</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-person"></i></span>
+              <input type="text" class="form-control" name="username" autofocus required>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">{{t "login.password"}}</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-lock"></i></span>
+              <input type="password" class="form-control" name="password" required>
+            </div>
+          </div>
+          <button class="btn btn-success w-100" type="submit"><i class="bi bi-box-arrow-in-right me-1"></i>{{t "login.submit"}}</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}
+{{template "layout" .}}

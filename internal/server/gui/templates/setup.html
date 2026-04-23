@@ -1,0 +1,46 @@
+{{define "content"}}
+<div class="row justify-content-center">
+  <div class="col-md-6">
+    <div class="card shadow-sm border-secondary-subtle mt-4">
+      <div class="card-body p-4">
+        <p class="text-body-secondary">{{t "setup.intro"}}</p>
+        <form method="post" action="/setup">
+          <div class="mb-3">
+            <label class="form-label">{{t "setup.username"}}</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-person"></i></span>
+              <input type="text" class="form-control" name="username" value="{{.FormUsername}}" autofocus required>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">{{t "setup.email"}}</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+              <input type="email" class="form-control" name="email" value="{{.FormEmail}}" required>
+            </div>
+          </div>
+          <div class="row">
+            <div class="mb-3 col">
+              <label class="form-label">{{t "setup.password"}}</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                <input type="password" class="form-control" name="password" minlength="8" required>
+              </div>
+            </div>
+            <div class="mb-3 col">
+              <label class="form-label">{{t "setup.password_confirm"}}</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+                <input type="password" class="form-control" name="password_confirm" minlength="8" required>
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-success w-100" type="submit">{{t
+            "setup.create"}}</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}
+{{template "layout" .}}
