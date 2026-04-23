@@ -4,7 +4,6 @@ name: release
 # v*-client  → publishes proxywi-client only
 on:
   push:
-    branches: [main]
     tags:
       - "v*-server"
       - "v*-client"
