@@ -1,5 +1,5 @@
-# proxywi.xyz        → :3000  (Admin GUI + WSS control plane)
-# pomar.proxywi.xyz  → :7443  (HTTPS proxy, forward-proxy only)
+# proxywi.xyz        → 3000  (Admin GUI + WSS control plane)
+# pomar.proxywi.xyz  → 8080  (HTTP forward proxy) + 1080 (SOCKS5 proxy)
 
 services:
   proxywi-server:
@@ -7,14 +7,15 @@ services:
     image: ghcr.io/butialabs/proxywi-server:latest
     restart: unless-stopped
     environment:
-      PROXYWI_PROXY_ADDR:  ":7443"
-      PROXYWI_MAIN_ADDR:     ":3000"
-      PROXYWI_MAIN_DOMAIN:   "proxywi.xyz"
-      PROXYWI_PROXY_DOMAIN: "pomar.proxywi.xyz"
-      PROXYWI_DATA_DIR:     "/data"
-      PROXYWI_TLS_MODE:     "on"
+      PROXYWI_PROXY_HTTP_PORT:   8080
+      PROXYWI_PROXY_SOCKET_PORT: 1080
+      PROXYWI_MAIN_PORT:         3000
+      PROXYWI_MAIN_DOMAIN:       "proxywi.xyz"
+      PROXYWI_PROXY_DOMAIN:      "pomar.proxywi.xyz"
+      PROXYWI_DATA_DIR:          "/data"
     volumes:
       - ./proxywi/data:/data
     ports:
-      - "7443:7443"
+      - "8080:8080"
+      - "1080:1080"
       - "3000:3000"

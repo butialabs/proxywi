@@ -348,11 +348,6 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 	g.render(w, r, "clients.html", data)
 }
 
-// controlURL returns the base WSS URL agents should dial (without path). The
-// client binary appends "/ws/control" itself, so we only emit scheme+host.
-// Derived from the incoming request so the generated compose matches whatever
-// host/port/scheme the admin is actually browsing with (reverse proxy on :443,
-// direct :3000, custom port, http in dev — all work).
 func controlURL(r *http.Request) string {
 	scheme := "ws"
 	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {

@@ -29,6 +29,6 @@ ENV PROXYWI_DATA_DIR=/data
 
 VOLUME ["/data"]
 
-EXPOSE 7443 3000
+EXPOSE 8080 1080 3000
 
 ENTRYPOINT ["/proxywi-server"]

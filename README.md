@@ -16,24 +16,26 @@ It is the "bring-your-own-IP" proxy setup most scraping and privacy tools assume
 
 ```
 proxywi.xyz                     pomar.proxywi.xyz
-(GUI + WSS control)             (HTTPS proxy)
-┌──────────────────────────┐    ┌──────────────────┐
-│ :3000 Admin UI           │    │ :7443 HTTPS proxy│
-│       /ws/control (WSS)  │◄─┐ └──────────────────┘
-└──────────────────────────┘  │           ▲
-                              │           │ yamux stream per
-                reverse tunnel│           │ proxied connection
-                              │           │
+(GUI + WS control)              (HTTP / SOCKS5 proxy)
+┌──────────────────────────┐    ┌────────────────────┐
+│ :3000 Admin UI           │    │ :8080 HTTP proxy   │
+│       /ws/control (WS)   │◄─┐ │ :1080 SOCKS5 proxy │
+└──────────────────────────┘  │ └────────────────────┘
+                              │           ▲
+              reverse tunnel  │           │ yamux stream per
+                              │           │ proxied connection
   ┌───────────────────────────┴───────────┴────────┐
-Client A                Client B              Client C
-(home, BR)              (VPS, DE)             …
+Client A                  Client B              Client C
+(home, BR)                (VPS, DE)             …
 ```
 
-- The **server** runs as a single Go binary with two listeners:
-  - `:3000` serves the admin GUI and the WSS control plane (`/ws/control`), this is where agents dial in.
-  - `:7443` is the HTTPS forward proxy (`CONNECT`), dedicated to data-plane traffic.
-- **Agents** run the same binary in client mode. They dial *out* to the server over WSS (so they work behind NAT/firewall without port-forwarding), finish a token handshake, and multiplex proxy streams over the tunnel with [yamux](https://github.com/hashicorp/yamux).
-- When somebody hits `user:pass@pomar.proxywi.xyz:7443` via an HTTPS proxy, the server authenticates them, picks a random online agent, opens a new yamux stream to that agent (over the long-lived control tunnel on `:3000`), and pipes bytes. Every new connection can land on a different agent → IP rotation by default.
+- The **server** runs as a single Go binary with three listeners:
+  - `3000` serves the admin GUI and the WS control plane (`/ws/control`), this is where agents dial in.
+  - `8080` is the HTTP forward proxy (`CONNECT` + absolute-URI).
+  - `1080` is the SOCKS5 proxy (user/pass auth).
+- All listeners speak plain HTTP/TCP. Terminate TLS in a reverse proxy (nginx, Caddy, Cloudflare, …) if you need `https://` / `wss://` in front.
+- **Agents** run the same binary in client mode. They dial *out* to the server over WS/WSS (so they work behind NAT/firewall without port-forwarding), finish a token handshake, and multiplex proxy streams over the tunnel with [yamux](https://github.com/hashicorp/yamux).
+- When somebody hits `user:pass@pomar.proxywi.xyz:8080` (HTTP) or `user:pass@pomar.proxywi.xyz:1080` (SOCKS5), the server authenticates them, picks a random online agent, opens a new yamux stream to that agent (over the long-lived control tunnel on `3000`), and pipes bytes. Every new connection can land on a different agent → IP rotation by default.
 - Per-agent metrics (bytes in/out, active connections) stream back over a dedicated meta stream and are aggregated per-minute for the dashboard.
 
 ---
@@ -47,18 +49,7 @@ curl -L https://raw.githubusercontent.com/butialabs/proxywi/refs/heads/main/comp
 docker compose up -d
 ```
 
-Two ports are exposed: `:3000` (admin GUI + WSS control) and `:7443` (HTTPS proxy).
-
-`PROXYWI_TLS_MODE` controls TLS on the `:7443` proxy listener:
-
-- **`on`** (default): Proxywi generates a long-lived self-signed cert on first boot, with SANs for the GUI domain, `pomar.proxywi.xyz`, `*.pomar.proxywi.xyz`, `localhost` and the loopback IPs. The cert/key are written to `PROXYWI_TLS_CACHE_DIR/self/`. Clients that don't trust self-signed certs will need to import the PEM into their trust store.
-- **`off`**: Plain HTTP on both listeners. Put Caddy / nginx / Traefik in front as a TLS-terminating reverse proxy and forward `pomar.proxywi.xyz` → `:7443` (and `proxywi.xyz` → `:3000`).
-- **`manual`**: Supply your own cert via `PROXYWI_TLS_CERT_FILE` + `PROXYWI_TLS_KEY_FILE`.
-- **`autocert`**: Let's Encrypt,  requires port `80` reachable for the HTTP-01 challenge; proxywi starts a companion `:80` listener automatically in this mode.
-
-`PROXYWI_TLS_MODE` applies to **both** listeners (`:3000` and `:7443`) with the same cert reused on both. With `off`, both are plain HTTP, front them with a reverse proxy that handles TLS + WebSocket upgrades (Caddy does both automatically; nginx needs the `Upgrade`/`Connection` headers).
-
-Open `https://proxywi.xyz` in a browser,  the first visit walks you through creating the admin user (username, email, password).
+Open `http://proxywi.xyz:3000` (or whatever reverse proxy you put in front) in a browser, the first visit walks you through creating the admin user (username, email, password).
 
 ### 2. Enroll an agent
 
@@ -73,14 +64,11 @@ Within a few seconds the client shows as **online** in the dashboard.
 ### 4. Use the proxy
 
 ```bash
-# HTTPS proxy - TLS to the proxy, then CONNECT tunnel to the target
-curl -k --proxy-insecure -x https://user:pass@pomar.proxywi.xyz:7443 https://ifconfig.me/ip
-```
+# HTTP forward proxy
+curl -x http://user:pass@pomar.proxywi.xyz:8080 https://ifconfig.me/ip
 
-If you expose port `443` externally (reverse proxy on `443` → container `7443`):
-
-```bash
-curl -x https://user:pass@pomar.proxywi.xyz https://ifconfig.me/ip
+# SOCKS5
+curl -x socks5h://user:pass@pomar.proxywi.xyz:1080 https://ifconfig.me/ip
 ```
 
 Run it 10 times in a loop: each call exits through a different agent.
@@ -91,18 +79,14 @@ Run it 10 times in a loop: each call exits through a different agent.
 
 ### Server
 
-| Variable                  | Default                | Purpose |
-|---------------------------|------------------------|---------|
-| `PROXYWI_MAIN_DOMAIN`     | `proxywi.xyz`          | Public host of the GUI and the control plane and agents connect |
-| `PROXYWI_MAIN_ADDR`       | `:3000`                | Admin GUI + WSS control plane listener |
-| `PROXYWI_PROXY_DOMAIN`    | `pomar.proxywi.xyz`    | Public host of the forward proxy |
-| `PROXYWI_PROXY_ADDR`      | `:7443`                | HTTPS forward-proxy listener (TLS-capable) |
-| `PROXYWI_DATA_DIR`        | `./data`               | Where SQLite data lives |
-| `PROXYWI_TLS_MODE`        | `on`                   | `on` (self-signed, default), `off` (reverse proxy does TLS), `manual`, `autocert` |
-| `PROXYWI_TLS_CERT_FILE`   | -                      | PEM cert file (required when `TLS_MODE=manual`) |
-| `PROXYWI_TLS_KEY_FILE`    | -                      | PEM key file (required when `TLS_MODE=manual`) |
-| `PROXYWI_TLS_CACHE_DIR`   | `./data/acme`          | Cert cache directory (self-signed lives under `<dir>/self/`, autocert caches at the root) |
-| `PROXYWI_ACME_EMAIL`      | -                      | Contact email for Let's Encrypt (optional) |
+| Variable                    | Default              | Purpose |
+|-----------------------------|----------------------|---------|
+| `PROXYWI_MAIN_DOMAIN`       | `proxywi.xyz`        | Public host of the GUI and the control plane agents connect to |
+| `PROXYWI_MAIN_PORT`         | `3000`               | Admin GUI + WS control plane listener |
+| `PROXYWI_PROXY_DOMAIN`      | `pomar.proxywi.xyz`  | Public host of the forward proxy |
+| `PROXYWI_PROXY_HTTP_PORT`   | `8080`               | HTTP forward-proxy listener |
+| `PROXYWI_PROXY_SOCKET_PORT` | `1080`               | SOCKS5 proxy listener |
+| `PROXYWI_DATA_DIR`          | `./data`             | Where SQLite data lives |
 
 #### Data permissions
 
@@ -118,10 +102,10 @@ sudo chmod -R 755 ./data
 
 | Variable                | Default    | Purpose |
 |-------------------------|------------|---------|
-| `PROXYWI_SERVER`        | *required* | e.g. `wss://proxywi.xyz` points at `PROXYWI_MAIN_DOMAIN`, not the proxy domain. |
+| `PROXYWI_SERVER`        | *required* | e.g. `ws://proxywi.xyz:3000` or `wss://proxywi.xyz` when a TLS-terminating reverse proxy is in front. Points at `PROXYWI_MAIN_DOMAIN`, not the proxy domain. |
 | `PROXYWI_TOKEN`         | *required* | Token from the GUI, shown once at enrollment |
 | `PROXYWI_CLIENT_NAME`   | hostname   | Display name in the GUI |
-| `PROXYWI_TLS_INSECURE`  | `false`    | Skip TLS verification when dialing the control plane. Required when the server is on `TLS_MODE=on` (self-signed) and the agent doesn't have the server cert in its trust store. |
+| `PROXYWI_TLS_INSECURE`  | `false`    | Skip TLS verification when dialing the control plane over `wss://` behind a self-signed reverse proxy. |
 
 ---
 

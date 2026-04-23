@@ -20,7 +20,7 @@ func runAdminSet(args []string) error {
 		fmt.Fprintf(os.Stderr, `usage: proxywi-server admin-set [flags]
 
 Rotate the credentials of an existing admin. Pass only the fields you want
-to change — others stay untouched.
+to change.
 
 flags:
   -target    current username (optional if there is exactly one admin)
@@ -72,7 +72,7 @@ The database is read from PROXYWI_DATA_DIR (default: ./data).
 		}
 		switch len(admins) {
 		case 0:
-			return errors.New("no admin exists yet — create one via the GUI first")
+			return errors.New("no admin exists yet, create one via the GUI first")
 		case 1:
 			a := admins[0]
 			admin = &a

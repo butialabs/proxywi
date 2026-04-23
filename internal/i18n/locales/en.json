@@ -54,7 +54,7 @@
 
   "clients.title": "Clients",
   "clients.new": "Add client",
-  "clients.compose_ready": "Client ready — paste the compose below",
+  "clients.compose_ready": "Client ready, paste the compose below",
   "clients.compose_help": "This is the only time the token will be shown. Paste the block into a compose.yml on the host that will act as the agent, then run 'docker compose up -d'",
   "clients.compose_view_help": "The original token is hashed and cannot be recovered. The compose below uses a placeholder; if the host lost the token, generate a new one.",
   "clients.compose_copied": "Compose copied to clipboard",

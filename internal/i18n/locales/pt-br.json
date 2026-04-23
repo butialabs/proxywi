@@ -54,7 +54,7 @@
 
   "clients.title": "Clientes",
   "clients.new": "Adicionar cliente",
-  "clients.compose_ready": "Cliente pronto — cole o compose abaixo",
+  "clients.compose_ready": "Cliente pronto, cole o compose abaixo",
   "clients.compose_help": "Esta é a única vez que o token será mostrado. Cole este bloco em um compose.yml no host que será o agente e rode 'docker compose up -d'.",
   "clients.compose_view_help": "O token original é armazenado com hash e não pode ser recuperado. O compose abaixo usa um placeholder; se o host perdeu o token, gere um novo.",
   "clients.compose_copied": "Compose copiado para a área de transferência",
