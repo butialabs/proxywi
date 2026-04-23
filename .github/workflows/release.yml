@@ -37,33 +37,6 @@ jobs:
       server_build: ${{ steps.out.outputs.server_build }}
       client_build: ${{ steps.out.outputs.client_build }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Detect path changes (branch pushes only)
-        id: changed
-        if: github.ref_type == 'branch'
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            server:
-              - 'cmd/proxywi-server/**'
-              - 'internal/config/**'
-              - 'internal/i18n/**'
-              - 'internal/server/**'
-              - 'internal/storage/**'
-              - 'internal/tunnel/**'
-              - 'docker/server/**'
-              - 'go.mod'
-              - 'go.sum'
-            client:
-              - 'cmd/proxywi-client/**'
-              - 'internal/config/**'
-              - 'internal/client/**'
-              - 'internal/tunnel/**'
-              - 'docker/client/**'
-              - 'go.mod'
-              - 'go.sum'
-
       - name: Resolve build flags
         id: out
         env:
@@ -76,13 +49,8 @@ jobs:
               [[ "$COMPONENT_INPUT" == "both" || "$COMPONENT_INPUT" == "client" ]] && client=true
               ;;
             push)
-              if [[ "${{ github.ref_type }}" == "tag" ]]; then
-                [[ "${{ github.ref_name }}" == *"-server" ]] && server=true
-                [[ "${{ github.ref_name }}" == *"-client" ]] && client=true
-              else
-                [[ "${{ steps.changed.outputs.server }}" == "true" ]] && server=true
-                [[ "${{ steps.changed.outputs.client }}" == "true" ]] && client=true
-              fi
+              [[ "${{ github.ref_name }}" == *"-server" ]] && server=true
+              [[ "${{ github.ref_name }}" == *"-client" ]] && client=true
               ;;
           esac
           echo "server_build=$server" >> "$GITHUB_OUTPUT"
@@ -172,8 +140,6 @@ jobs:
             type=match,pattern=v(.*)-server,group=1,enable=${{ github.ref_type == 'tag' }}
             type=match,pattern=v(.*)-server,group=1,prefix=v,enable=${{ github.ref_type == 'tag' }}
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
-            type=sha,prefix=sha-,enable=${{ github.ref_type == 'branch' }}
-            type=raw,value=edge,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
       - name: Create manifest list
         working-directory: /tmp/digests
@@ -271,8 +237,6 @@ jobs:
             type=match,pattern=v(.*)-client,group=1,enable=${{ github.ref_type == 'tag' }}
             type=match,pattern=v(.*)-client,group=1,prefix=v,enable=${{ github.ref_type == 'tag' }}
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
-            type=sha,prefix=sha-,enable=${{ github.ref_type == 'branch' }}
-            type=raw,value=edge,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
       - name: Create manifest list
         working-directory: /tmp/digests
