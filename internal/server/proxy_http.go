@@ -133,23 +133,88 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := bufrw.Flush(); err != nil {
 			return
 		}
-	} else {
-		if err := r.Write(upstream); err != nil {
-			return
+
+		if buffered := bufrw.Reader.Buffered(); buffered > 0 {
+			buf := make([]byte, buffered)
+			if _, err := io.ReadFull(bufrw.Reader, buf); err == nil {
+				_, _ = upstream.Write(buf)
+				bytesOut += int64(buffered)
+			}
 		}
+
+		bytesIn, bytesOut = pipe(clientConn, upstream, bytesIn, bytesOut)
+		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "http", "ok",
+			bytesIn, bytesOut, time.Since(start).Milliseconds())
+		return
 	}
 
-	if buffered := bufrw.Reader.Buffered(); buffered > 0 && r.Method == http.MethodConnect {
-		buf := make([]byte, buffered)
-		if _, err := io.ReadFull(bufrw.Reader, buf); err == nil {
-			_, _ = upstream.Write(buf)
-			bytesOut += int64(buffered)
-		}
-	}
+	stripHopByHopHeaders(r.Header)
+	r.Header.Del("Proxy-Authorization")
+	r.Header.Del("Proxy-Connection")
 
-	bytesIn, bytesOut = pipe(clientConn, upstream, bytesIn, bytesOut)
+	reqBytes := &countingWriter{w: upstream}
+	if err := r.Write(reqBytes); err != nil {
+		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "http", "failed", 0, 0, 0)
+		return
+	}
+	bytesOut += reqBytes.n
+
+	resp, err := http.ReadResponse(bufio.NewReader(upstream), r)
+	if err != nil {
+		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "http", "failed",
+			bytesIn, bytesOut, time.Since(start).Milliseconds())
+		return
+	}
+	defer resp.Body.Close()
+
+	stripHopByHopHeaders(resp.Header)
+
+	respBytes := &countingWriter{w: clientConn}
+	if err := resp.Write(respBytes); err != nil {
+		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "http", "failed",
+			bytesIn, bytesOut, time.Since(start).Milliseconds())
+		return
+	}
+	bytesIn += respBytes.n
+
 	p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "http", "ok",
 		bytesIn, bytesOut, time.Since(start).Milliseconds())
+}
+
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
+var hopByHopHeaders = []string{
+	"Connection",
+	"Keep-Alive",
+	"Proxy-Authenticate",
+	"Proxy-Authorization",
+	"Proxy-Connection",
+	"Te",
+	"Trailer",
+	"Transfer-Encoding",
+	"Upgrade",
+}
+
+func stripHopByHopHeaders(h http.Header) {
+	if c := h.Get("Connection"); c != "" {
+		for _, token := range strings.Split(c, ",") {
+			if name := strings.TrimSpace(token); name != "" {
+				h.Del(name)
+			}
+		}
+	}
+	for _, name := range hopByHopHeaders {
+		h.Del(name)
+	}
 }
 
 func (p *HTTPProxy) logEvent(ctx context.Context,
