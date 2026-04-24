@@ -469,26 +469,57 @@ type accessView struct {
 	AllowedSourceCIDRs []string
 	CIDRsCSV           string
 	CreatedHuman       string
+	AllClients         bool
+	AllowedClientIDs   []int64
+	ClientIDsCSV       string
+	AllowedClientNames []string
 }
 
 func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	list, _ := g.Store.ListUsers(ctx)
+	clients, _ := g.Store.ListClients(ctx)
+
+	clientByID := make(map[int64]string, len(clients))
+	for _, c := range clients {
+		clientByID[c.ID] = c.Name
+	}
+
 	views := make([]accessView, 0, len(list))
 	for _, u := range list {
+		ids := u.AllowedClientIDs
+		idStrs := make([]string, 0, len(ids))
+		names := make([]string, 0, len(ids))
+		for _, id := range ids {
+			idStrs = append(idStrs, strconv.FormatInt(id, 10))
+			if n, ok := clientByID[id]; ok {
+				names = append(names, n)
+			}
+		}
 		views = append(views, accessView{
 			ID:                 u.ID,
 			Username:           u.Username,
 			AllowedSourceCIDRs: u.AllowedSourceCIDRs,
 			CIDRsCSV:           strings.Join(u.AllowedSourceCIDRs, ","),
 			CreatedHuman:       u.CreatedAt.Format("2006-01-02"),
+			AllClients:         len(ids) == 0,
+			AllowedClientIDs:   ids,
+			ClientIDsCSV:       strings.Join(idStrs, ","),
+			AllowedClientNames: names,
 		})
 	}
+
+	clientOpts := make([]clientOption, 0, len(clients))
+	for _, c := range clients {
+		clientOpts = append(clientOpts, clientOption{ID: c.ID, Name: c.Name})
+	}
+
 	g.render(w, r, "access.html", map[string]any{
-		"Title":    "Proxy Access",
-		"Active":   "access",
-		"User":     g.adminName(ctx),
-		"Accesses": views,
+		"Title":         "Proxy Access",
+		"Active":        "access",
+		"User":          g.adminName(ctx),
+		"Accesses":      views,
+		"ClientOptions": clientOpts,
 	})
 }
 
@@ -506,7 +537,8 @@ func (g *GUI) postNewAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cidrs := splitCSV(r.Form.Get("cidrs"))
-	if _, err := g.Store.CreateUser(r.Context(), username, string(hash), cidrs); err != nil {
+	clientIDs := parseClientIDs(r.Form["client_ids"])
+	if _, err := g.Store.CreateUser(r.Context(), username, string(hash), cidrs, clientIDs); err != nil {
 		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -523,6 +555,7 @@ func (g *GUI) postEditAccess(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.Form.Get("username"))
 	password := r.Form.Get("password")
 	cidrs := splitCSV(r.Form.Get("cidrs"))
+	clientIDs := parseClientIDs(r.Form["client_ids"])
 
 	var newHash string
 	if password != "" {
@@ -533,11 +566,29 @@ func (g *GUI) postEditAccess(w http.ResponseWriter, r *http.Request) {
 		}
 		newHash = string(hash)
 	}
-	if err := g.Store.UpdateUser(r.Context(), id, username, newHash, cidrs, true); err != nil {
+	if err := g.Store.UpdateUser(r.Context(), id, username, newHash, cidrs, true, clientIDs, true); err != nil {
 		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/access", http.StatusFound)
+}
+
+func parseClientIDs(raw []string) []int64 {
+	out := make([]int64, 0, len(raw))
+	seen := map[int64]bool{}
+	for _, s := range raw {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 func (g *GUI) postDeleteAccess(w http.ResponseWriter, r *http.Request) {

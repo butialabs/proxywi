@@ -98,6 +98,11 @@
   "access.field_password": "Senha",
   "access.field_password_optional": "Senha (vazio = manter)",
   "access.field_cidrs": "CIDRs de origem permitidos (vazio = qualquer)",
+  "access.field_clients": "Clientes na rotatividade",
+  "access.field_clients_help": "Marque os clientes que este acesso pode usar. Se nenhum for marcado, usa todos os clientes disponíveis.",
+  "access.col_allowed_clients": "Clientes permitidos",
+  "access.all_clients": "todos",
+  "access.no_clients": "Nenhum cliente cadastrado ainda.",
   "access.create": "Criar",
   "access.save": "Salvar",
 

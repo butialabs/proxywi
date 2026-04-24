@@ -68,7 +68,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent, err := p.Registry.PickNext()
+	agent, err := p.Registry.PickNextAllowed(u.AllowedClientIDs)
 	if err != nil {
 		http.Error(w, "No upstream agent available", http.StatusBadGateway)
 		p.logEvent(ctx, u.ID, u.Username, 0, "", r.Host, sourceIP, "http", "failed", 0, 0, 0)

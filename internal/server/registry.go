@@ -133,14 +133,33 @@ func (r *Registry) Online() []*Agent {
 }
 
 func (r *Registry) PickNext() (*Agent, error) {
+	return r.PickNextAllowed(nil)
+}
+
+func (r *Registry) PickNextAllowed(allowed []int64) (*Agent, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.agents) == 0 {
 		return nil, ErrNoAgents
 	}
+	var allowSet map[int64]struct{}
+	if len(allowed) > 0 {
+		allowSet = make(map[int64]struct{}, len(allowed))
+		for _, id := range allowed {
+			allowSet[id] = struct{}{}
+		}
+	}
 	ids := make([]int64, 0, len(r.agents))
 	for id := range r.agents {
+		if allowSet != nil {
+			if _, ok := allowSet[id]; !ok {
+				continue
+			}
+		}
 		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, ErrNoAgents
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 

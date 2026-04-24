@@ -105,7 +105,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 		return
 	}
 
-	agent, err := s.Registry.PickNext()
+	agent, err := s.Registry.PickNextAllowed(u.AllowedClientIDs)
 	if err != nil {
 		_, _ = conn.Write(socksReply(socksRepNetUnreach))
 		s.logEvent(ctx, u.ID, u.Username, 0, "", target, sourceIP, "socks", "failed", 0, 0, 0)

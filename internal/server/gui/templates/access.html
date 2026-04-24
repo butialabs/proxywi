@@ -12,6 +12,7 @@
           <th>{{t "access.col_id"}}</th>
           <th>{{t "access.col_user"}}</th>
           <th>{{t "access.col_allowed_cidrs"}}</th>
+          <th>{{t "access.col_allowed_clients"}}</th>
           <th>{{t "access.col_created"}}</th>
           <th></th>
         </tr>
@@ -22,6 +23,13 @@
           <td class="text-body-secondary">{{.ID}}</td>
           <td class="fw-semibold">{{.Username}}</td>
           <td>{{if .AllowedSourceCIDRs}}{{range .AllowedSourceCIDRs}}<code class="me-1">{{.}}</code>{{end}}{{else}}<span class="badge bg-secondary-subtle text-body-secondary">{{t "access.any_source"}}</span>{{end}}</td>
+          <td>
+            {{if .AllClients}}
+              <span class="badge bg-primary-subtle text-primary-emphasis">{{t "access.all_clients"}}</span>
+            {{else}}
+              {{range .AllowedClientNames}}<span class="badge bg-secondary-subtle text-body me-1">{{.}}</span>{{end}}
+            {{end}}
+          </td>
           <td class="text-body-secondary small">{{.CreatedHuman}}</td>
           <td class="text-end text-nowrap">
             <button type="button" class="btn btn-sm btn-outline-primary"
@@ -29,7 +37,8 @@
                     data-bs-toggle="modal" data-bs-target="#editAccess"
                     data-access-id="{{.ID}}"
                     data-access-username="{{.Username}}"
-                    data-access-cidrs="{{.CIDRsCSV}}">
+                    data-access-cidrs="{{.CIDRsCSV}}"
+                    data-access-client-ids="{{.ClientIDsCSV}}">
               <i class="bi bi-pencil"></i>
             </button>
             <form method="post" action="/access/{{.ID}}/delete" class="d-inline" onsubmit="return confirm('{{tp "access.confirm_delete" .}}');">
@@ -38,7 +47,7 @@
           </td>
         </tr>
       {{else}}
-        <tr><td colspan="5" class="text-center text-body-secondary p-4">{{t "access.empty"}}</td></tr>
+        <tr><td colspan="6" class="text-center text-body-secondary p-4">{{t "access.empty"}}</td></tr>
       {{end}}
       </tbody>
     </table>
@@ -51,7 +60,23 @@
     <div class="modal-body">
       <div class="mb-3"><label class="form-label">{{t "access.field_username"}}</label><input class="form-control" name="username" required></div>
       <div class="mb-3"><label class="form-label">{{t "access.field_password"}}</label><input type="password" class="form-control" name="password" required></div>
-      <div class="mb-0"><label class="form-label">{{t "access.field_cidrs"}}</label><input class="form-control" name="cidrs" placeholder="200.10.0.0/16,203.0.113.5/32"></div>
+      <div class="mb-3"><label class="form-label">{{t "access.field_cidrs"}}</label><input class="form-control" name="cidrs" placeholder="200.10.0.0/16,203.0.113.5/32"></div>
+      <div class="mb-0">
+        <label class="form-label">{{t "access.field_clients"}}</label>
+        <div class="form-text mb-2">{{t "access.field_clients_help"}}</div>
+        {{if .ClientOptions}}
+          <div class="border rounded p-2" data-access-clients="new" style="max-height:220px;overflow:auto;">
+            {{range .ClientOptions}}
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="client_ids" value="{{.ID}}" id="newAccessClient-{{.ID}}">
+                <label class="form-check-label" for="newAccessClient-{{.ID}}">{{.Name}} <span class="text-body-secondary small">#{{.ID}}</span></label>
+              </div>
+            {{end}}
+          </div>
+        {{else}}
+          <div class="text-body-secondary small">{{t "access.no_clients"}}</div>
+        {{end}}
+      </div>
     </div>
     <div class="modal-footer"><button type="submit" class="btn btn-success">{{t "access.create"}}</button></div>
   </form>
@@ -63,7 +88,23 @@
     <div class="modal-body">
       <div class="mb-3"><label class="form-label">{{t "access.field_username"}}</label><input class="form-control" name="username" id="editAccessUsername" required></div>
       <div class="mb-3"><label class="form-label">{{t "access.field_password_optional"}}</label><input type="password" class="form-control" name="password" id="editAccessPassword" autocomplete="new-password"></div>
-      <div class="mb-0"><label class="form-label">{{t "access.field_cidrs"}}</label><input class="form-control" name="cidrs" id="editAccessCidrs" placeholder="200.10.0.0/16,203.0.113.5/32"></div>
+      <div class="mb-3"><label class="form-label">{{t "access.field_cidrs"}}</label><input class="form-control" name="cidrs" id="editAccessCidrs" placeholder="200.10.0.0/16,203.0.113.5/32"></div>
+      <div class="mb-0">
+        <label class="form-label">{{t "access.field_clients"}}</label>
+        <div class="form-text mb-2">{{t "access.field_clients_help"}}</div>
+        {{if .ClientOptions}}
+          <div class="border rounded p-2" data-access-clients="edit" style="max-height:220px;overflow:auto;">
+            {{range .ClientOptions}}
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="client_ids" value="{{.ID}}" id="editAccessClient-{{.ID}}">
+                <label class="form-check-label" for="editAccessClient-{{.ID}}">{{.Name}} <span class="text-body-secondary small">#{{.ID}}</span></label>
+              </div>
+            {{end}}
+          </div>
+        {{else}}
+          <div class="text-body-secondary small">{{t "access.no_clients"}}</div>
+        {{end}}
+      </div>
     </div>
     <div class="modal-footer"><button type="submit" class="btn btn-primary">{{t "access.save"}}</button></div>
   </form>

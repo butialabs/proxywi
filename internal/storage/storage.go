@@ -276,27 +276,89 @@ type User struct {
 	Username           string
 	PasswordHash       string
 	AllowedSourceCIDRs []string
+	AllowedClientIDs   []int64
 	CreatedAt          time.Time
 }
 
-func (s *Store) CreateUser(ctx context.Context, username, passwordHash string, allowedCIDRs []string) (int64, error) {
+func (s *Store) CreateUser(ctx context.Context, username, passwordHash string, allowedCIDRs []string, allowedClientIDs []int64) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO users (username, password_hash, allowed_source_cidrs, created_at) VALUES (?, ?, ?, ?)`,
 		username, passwordHash, strings.Join(allowedCIDRs, ","), time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := s.ReplaceUserClients(ctx, id, allowedClientIDs); err != nil {
+		return id, err
+	}
+	return id, nil
+}
+
+func (s *Store) ReplaceUserClients(ctx context.Context, userID int64, clientIDs []int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM user_clients WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	seen := map[int64]bool{}
+	for _, cid := range clientIDs {
+		if cid <= 0 || seen[cid] {
+			continue
+		}
+		seen[cid] = true
+		if _, err := tx.ExecContext(ctx, `INSERT INTO user_clients (user_id, client_id) VALUES (?, ?)`, userID, cid); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) UserByUsername(ctx context.Context, username string) (*User, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, username, password_hash, allowed_source_cidrs, created_at FROM users WHERE username = ?`, username)
-	return scanUser(row)
+	u, err := scanUser(row)
+	if err != nil || u == nil {
+		return u, err
+	}
+	if err := s.loadUserClientIDs(ctx, u); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, username, password_hash, allowed_source_cidrs, created_at FROM users WHERE id = ?`, id)
-	return scanUser(row)
+	u, err := scanUser(row)
+	if err != nil || u == nil {
+		return u, err
+	}
+	if err := s.loadUserClientIDs(ctx, u); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+func (s *Store) loadUserClientIDs(ctx context.Context, u *User) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT client_id FROM user_clients WHERE user_id = ? ORDER BY client_id`, u.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+	u.AllowedClientIDs = ids
+	return rows.Err()
 }
 
 type rowScanner interface {
@@ -327,6 +389,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	}
 	defer rows.Close()
 	var out []User
+	idx := map[int64]int{}
 	for rows.Next() {
 		var u User
 		var cidrs string
@@ -338,12 +401,33 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 			u.AllowedSourceCIDRs = strings.Split(cidrs, ",")
 		}
 		u.CreatedAt = time.Unix(created, 0)
+		idx[u.ID] = len(out)
 		out = append(out, u)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	assocRows, err := s.db.QueryContext(ctx, `SELECT user_id, client_id FROM user_clients ORDER BY client_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer assocRows.Close()
+	for assocRows.Next() {
+		var uid, cid int64
+		if err := assocRows.Scan(&uid, &cid); err != nil {
+			return nil, err
+		}
+		if i, ok := idx[uid]; ok {
+			out[i].AllowedClientIDs = append(out[i].AllowedClientIDs, cid)
+		}
+	}
+	return out, assocRows.Err()
 }
 
-func (s *Store) UpdateUser(ctx context.Context, id int64, newUsername, newPasswordHash string, newAllowedCIDRs []string, replaceCIDRs bool) error {
+func (s *Store) UpdateUser(ctx context.Context, id int64, newUsername, newPasswordHash string, newAllowedCIDRs []string, replaceCIDRs bool, newAllowedClientIDs []int64, replaceClientIDs bool) error {
 	sets := []string{}
 	args := []any{}
 	if newUsername != "" {
@@ -358,13 +442,19 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, newUsername, newPasswo
 		sets = append(sets, "allowed_source_cidrs = ?")
 		args = append(args, strings.Join(newAllowedCIDRs, ","))
 	}
-	if len(sets) == 0 {
-		return nil
+	if len(sets) > 0 {
+		args = append(args, id)
+		q := `UPDATE users SET ` + strings.Join(sets, ", ") + ` WHERE id = ?`
+		if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
+			return err
+		}
 	}
-	args = append(args, id)
-	q := `UPDATE users SET ` + strings.Join(sets, ", ") + ` WHERE id = ?`
-	_, err := s.db.ExecContext(ctx, q, args...)
-	return err
+	if replaceClientIDs {
+		if err := s.ReplaceUserClients(ctx, id, newAllowedClientIDs); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {

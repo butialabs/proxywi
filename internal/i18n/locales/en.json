@@ -98,6 +98,11 @@
   "access.field_password": "Password",
   "access.field_password_optional": "Password (leave blank to keep)",
   "access.field_cidrs": "Allowed source CIDRs (empty = any)",
+  "access.field_clients": "Clients in rotation",
+  "access.field_clients_help": "Check which clients this access may rotate through. Leave all unchecked to use every client.",
+  "access.col_allowed_clients": "Allowed clients",
+  "access.all_clients": "all",
+  "access.no_clients": "No clients registered yet.",
   "access.create": "Create",
   "access.save": "Save",
 
