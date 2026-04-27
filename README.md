@@ -8,7 +8,7 @@ Is a cloud proxy pool that lets you route HTTP(S) traffic through a fleet of age
 
 It is the "bring-your-own-IP" proxy setup most scraping and privacy tools assume you already have, packaged as two Docker images and a web GUI.
 
-> Status: Stable beta.
+> Status: Beta
 
 ---
 
@@ -106,6 +106,38 @@ sudo chmod -R 755 ./data
 | `PROXYWI_TOKEN`         | *required* | Token from the GUI, shown once at enrollment |
 | `PROXYWI_CLIENT_NAME`   | hostname   | Display name in the GUI |
 | `PROXYWI_TLS_INSECURE`  | `false`    | Skip TLS verification when dialing the control plane over `wss://` behind a self-signed reverse proxy. |
+
+---
+
+## Development
+
+Local dev runs the two binaries directly with `go run`, against the SCSS/JS bundle produced by `npm run build`. No Docker required.
+
+### Prerequisites
+
+- Go (see `go.mod` for the minimum version)
+- Node.js + npm (only needed once, to build the GUI assets)
+
+### One-time setup
+
+```bash
+go mod download
+npm install
+npm run build
+npm run watch
+```
+
+### Run the server
+
+```bash
+go run ./cmd/proxywi-server
+```
+
+### Run the client
+
+```bash
+go run ./cmd/proxywi-client
+```
 
 ---
 

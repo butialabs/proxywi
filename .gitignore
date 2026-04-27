@@ -87,4 +87,4 @@ yarn-debug.log*
 yarn-error.log*
 internal/server/gui/dist/css/app.css
 internal/server/gui/dist/js/app.js
-dev/
+data/

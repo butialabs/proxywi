@@ -14,7 +14,7 @@ services:
       PROXYWI_PROXY_DOMAIN:      "pomar.proxywi.xyz"
       PROXYWI_DATA_DIR:          "/data"
     volumes:
-      - ./dev/data:/data
+      - ./data:/data
     ports:
       - "8080:8080"
       - "1080:1080"
