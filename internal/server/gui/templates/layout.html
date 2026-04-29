@@ -83,6 +83,7 @@
   {{if .Flash}}<div class="alert alert-{{.FlashKind}} d-flex align-items-center"><i class="bi bi-info-circle me-2"></i><span>{{.Flash}}</span></div>{{end}}
   {{template "content" .}}
 </main>
+{{block "modals" .}}{{end}}
 <script>{{appJS}}</script>
 </body>
 </html>{{end}}

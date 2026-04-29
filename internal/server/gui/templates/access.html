@@ -53,7 +53,9 @@
     </table>
   </div>
 </div>
+{{end}}
 
+{{define "modals"}}
 <div class="modal fade" id="newAccess" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
   <form method="post" action="/access/new">
     <div class="modal-header"><h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>{{t "access.modal_title"}}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
@@ -109,6 +111,6 @@
     <div class="modal-footer"><button type="submit" class="btn btn-primary">{{t "access.save"}}</button></div>
   </form>
 </div></div></div>
-
 {{end}}
+
 {{template "layout" .}}
