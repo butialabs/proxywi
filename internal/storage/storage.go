@@ -732,6 +732,50 @@ func (s *Store) UnbanIP(ctx context.Context, sourceIP string) error {
 	return err
 }
 
+type AllowedIP struct {
+	IP        string
+	Reason    string
+	CreatedAt time.Time
+}
+
+func (s *Store) AddAllowedIP(ctx context.Context, ip, reason string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO ip_allowlist (ip, reason, created_at) VALUES (?, ?, ?)
+		 ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason`,
+		ip, reason, time.Now().Unix())
+	return err
+}
+
+func (s *Store) RemoveAllowedIP(ctx context.Context, ip string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM ip_allowlist WHERE ip = ?`, ip)
+	return err
+}
+
+func (s *Store) ListAllowedIPs(ctx context.Context) ([]AllowedIP, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT ip, reason, created_at FROM ip_allowlist ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AllowedIP
+	for rows.Next() {
+		var a AllowedIP
+		var ts int64
+		if err := rows.Scan(&a.IP, &a.Reason, &ts); err != nil {
+			return nil, err
+		}
+		a.CreatedAt = time.Unix(ts, 0)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) IsIPAllowed(ctx context.Context, ip string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ip_allowlist WHERE ip = ?`, ip).Scan(&count)
+	return count > 0, err
+}
+
 func randomHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)

@@ -65,6 +65,8 @@ func (g *GUI) Router() http.Handler {
 			r.Get("/security", g.getSecurity)
 			r.Post("/security/ban", g.postBan)
 			r.Post("/security/unban", g.postUnban)
+			r.Post("/security/allowlist/add", g.postAddAllowedIP)
+			r.Post("/security/allowlist/remove", g.postRemoveAllowedIP)
 			r.Get("/logs", g.getLogs)
 			r.Get("/events/dashboard", g.eventsDashboard)
 			r.Get("/events/logs", g.eventsLogs)

@@ -76,6 +76,9 @@ func (g *AuthGate) limiterFor(ip string) *rate.Limiter {
 }
 
 func (g *AuthGate) CheckPreAuth(ctx context.Context, sourceIP string) error {
+	if allowed, _ := g.Store.IsIPAllowed(ctx, sourceIP); allowed {
+		return nil
+	}
 	ban, err := g.Store.ActiveBan(ctx, sourceIP)
 	if err == nil && ban != nil {
 		return ErrBanned

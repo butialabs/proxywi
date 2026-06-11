@@ -697,12 +697,35 @@ func (g *GUI) getSecurity(w http.ResponseWriter, r *http.Request) {
 			ExpiresHuman: humanUntil(b.BannedUntil),
 		})
 	}
+	allowlist, _ := g.Store.ListAllowedIPs(ctx)
 	g.render(w, r, "security.html", map[string]any{
 		"Title":      "Security",
 		"Active":     "security",
 		"User":       g.adminName(ctx),
 		"ActiveBans": views,
+		"Allowlist":  allowlist,
 	})
+}
+
+func (g *GUI) postAddAllowedIP(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	ip := strings.TrimSpace(r.Form.Get("ip"))
+	reason := strings.TrimSpace(r.Form.Get("reason"))
+	if ip == "" {
+		http.Error(w, "ip required", http.StatusBadRequest)
+		return
+	}
+	_ = g.Store.AddAllowedIP(r.Context(), ip, reason)
+	http.Redirect(w, r, "/security", http.StatusFound)
+}
+
+func (g *GUI) postRemoveAllowedIP(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	ip := strings.TrimSpace(r.Form.Get("ip"))
+	if ip != "" {
+		_ = g.Store.RemoveAllowedIP(r.Context(), ip)
+	}
+	http.Redirect(w, r, "/security", http.StatusFound)
 }
 
 func (g *GUI) postBan(w http.ResponseWriter, r *http.Request) {
