@@ -427,21 +427,6 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	return out, assocRows.Err()
 }
 
-func (s *Store) UserCIDRsByUsername(ctx context.Context, username string) ([]string, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT allowed_source_cidrs FROM users WHERE username = ?`, username)
-	var v string
-	if err := row.Scan(&v); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	if v == "" {
-		return nil, nil
-	}
-	return strings.Split(v, ","), nil
-}
-
 func (s *Store) UpdateUser(ctx context.Context, id int64, newUsername, newPasswordHash string, newAllowedCIDRs []string, replaceCIDRs bool, newAllowedClientIDs []int64, replaceClientIDs bool) error {
 	sets := []string{}
 	args := []any{}

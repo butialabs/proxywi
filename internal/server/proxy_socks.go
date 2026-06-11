@@ -59,7 +59,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 
 	sourceIP, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
-	if err := s.Gate.CheckBan(ctx, sourceIP); err != nil {
+	if err := s.Gate.CheckPreAuth(ctx, sourceIP); err != nil {
 		s.logEvent(ctx, 0, "", 0, "", "", sourceIP, "socks", "denied", 0, 0, 0)
 		return
 	}
@@ -80,11 +80,6 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 
 	username, password, ok := readUserPass(br)
 	if !ok {
-		return
-	}
-
-	if err := s.Gate.CheckPreAuth(ctx, sourceIP, username); err != nil {
-		s.logEvent(ctx, 0, username, 0, "", "", sourceIP, "socks", "denied", 0, 0, 0)
 		return
 	}
 
