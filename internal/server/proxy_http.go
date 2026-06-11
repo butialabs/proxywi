@@ -40,7 +40,8 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sourceIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 
-	if err := p.Gate.CheckPreAuth(ctx, sourceIP); err != nil {
+	reqUser, _, _ := parseProxyAuth(r.Header.Get("Proxy-Authorization"))
+	if err := p.Gate.CheckPreAuth(ctx, sourceIP, reqUser); err != nil {
 		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 		p.logEvent(ctx, 0, "", 0, "", r.Host, sourceIP, "http", "denied", 0, 0, 0)
 		return

@@ -75,15 +75,45 @@ func (g *AuthGate) limiterFor(ip string) *rate.Limiter {
 	return lim
 }
 
-func (g *AuthGate) CheckPreAuth(ctx context.Context, sourceIP string) error {
+func (g *AuthGate) CheckBan(ctx context.Context, sourceIP string) error {
 	ban, err := g.Store.ActiveBan(ctx, sourceIP)
 	if err == nil && ban != nil {
 		return ErrBanned
+	}
+	return nil
+}
+
+func (g *AuthGate) CheckPreAuth(ctx context.Context, sourceIP, username string) error {
+	if err := g.CheckBan(ctx, sourceIP); err != nil {
+		return err
+	}
+	if username != "" {
+		cidrs, _ := g.Store.UserCIDRsByUsername(ctx, username)
+		if ipInCIDRs(sourceIP, cidrs) {
+			return nil
+		}
 	}
 	if !g.limiterFor(sourceIP).Allow() {
 		return ErrRateLimited
 	}
 	return nil
+}
+
+func ipInCIDRs(ip string, cidrs []string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			continue
+		}
+		if n.Contains(parsed) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *AuthGate) VerifyCredentials(ctx context.Context, username, password string) (*storage.User, bool) {
