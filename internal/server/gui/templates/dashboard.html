@@ -7,6 +7,12 @@
       <span id="live-status-text">{{t "logs.connecting"}}</span>
     </span>
     <form class="d-flex align-items-center gap-2" method="get" action="/">
+      <select name="user_id" class="form-select form-select-sm" style="width:auto;">
+        <option value="0" {{if eq .FilterUserID 0}}selected{{end}}>{{t "dashboard.all_access"}}</option>
+        {{range .AccessOptions}}
+          <option value="{{.ID}}" {{if eq .ID $.FilterUserID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
       <select name="client_id" class="form-select form-select-sm" style="width:auto;">
         <option value="0" {{if eq .FilterClientID 0}}selected{{end}}>{{t "dashboard.all_clients"}}</option>
         {{range .ClientOptions}}

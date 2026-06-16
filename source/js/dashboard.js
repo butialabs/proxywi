@@ -96,6 +96,9 @@
     }
 
     var perClient = {};
+    (data.online || []).forEach(function (c) {
+      perClient[c.id] = { online: true, active: c.active || 0 };
+    });
     function totalActive() {
       return Object.values(perClient).reduce(function (s, c) { return s + (c.active || 0); }, 0);
     }

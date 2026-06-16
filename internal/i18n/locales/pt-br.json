@@ -37,6 +37,7 @@
   "dashboard.filter_client": "Cliente",
   "dashboard.filter_period": "Período",
   "dashboard.all_clients": "Todos os clientes",
+  "dashboard.all_access": "Todos os acessos",
   "dashboard.period_1h": "Última 1 hora",
   "dashboard.period_6h": "Últimas 6 horas",
   "dashboard.period_24h": "Últimas 24 horas",
@@ -126,6 +127,9 @@
   "logs.page_next": "Próxima",
   "logs.page_status": "Página {{.Page}} de {{.TotalPages}}",
   "logs.total_count": "{{.Total}} entradas nas últimas 24h",
+  "logs.filter_all_users": "Todos os usuários",
+  "logs.filter_all_clients": "Todos os clientes",
+  "logs.filter_search": "Destino ou origem…",
 
   "security.title": "Segurança do endpoint proxy",
   "security.active_bans": "IPs banidos agora",

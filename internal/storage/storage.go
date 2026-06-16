@@ -486,6 +486,7 @@ type MetricsFilter struct {
 	Since         time.Time
 	Until         time.Time
 	ClientID      int64
+	ClientIDs     []int64
 	BucketSeconds int64
 }
 
@@ -505,6 +506,11 @@ func (s *Store) Metrics(ctx context.Context, f MetricsFilter) ([]MetricPoint, er
 	if f.ClientID > 0 {
 		q += ` AND client_id = ?`
 		args = append(args, f.ClientID)
+	} else if len(f.ClientIDs) > 0 {
+		q += ` AND client_id IN (` + placeholders(len(f.ClientIDs)) + `)`
+		for _, id := range f.ClientIDs {
+			args = append(args, id)
+		}
 	}
 	q += ` GROUP BY b ORDER BY b`
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -596,27 +602,60 @@ func (s *Store) ListProxyEvents(ctx context.Context, since time.Time, limit int)
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	return s.queryProxyEvents(ctx, since, limit, 0)
+	return s.ListProxyEventsFiltered(ctx, ProxyEventFilter{Since: since}, limit, 0)
 }
 
 func (s *Store) ListProxyEventsPage(ctx context.Context, since time.Time, limit, offset int) ([]ProxyEvent, error) {
+	return s.ListProxyEventsFiltered(ctx, ProxyEventFilter{Since: since}, limit, offset)
+}
+
+func (s *Store) CountProxyEvents(ctx context.Context, since time.Time) (int, error) {
+	return s.CountProxyEventsFiltered(ctx, ProxyEventFilter{Since: since})
+}
+
+type ProxyEventFilter struct {
+	Since    time.Time
+	UserID   int64
+	ClientID int64
+	Search   string
+}
+
+func (f ProxyEventFilter) where() (string, []any) {
+	conds := []string{"e.ts >= ?"}
+	args := []any{f.Since.Unix()}
+	if f.UserID > 0 {
+		conds = append(conds, "e.user_id = ?")
+		args = append(args, f.UserID)
+	}
+	if f.ClientID > 0 {
+		conds = append(conds, "e.client_id = ?")
+		args = append(args, f.ClientID)
+	}
+	if f.Search != "" {
+		conds = append(conds, "(e.target_host LIKE ? OR e.source_ip LIKE ?)")
+		like := "%" + f.Search + "%"
+		args = append(args, like, like)
+	}
+	return strings.Join(conds, " AND "), args
+}
+
+func (s *Store) CountProxyEventsFiltered(ctx context.Context, f ProxyEventFilter) (int, error) {
+	where, args := f.where()
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM proxy_events e WHERE `+where, args...).Scan(&n)
+	return n, err
+}
+
+func (s *Store) ListProxyEventsFiltered(ctx context.Context, f ProxyEventFilter, limit, offset int) ([]ProxyEvent, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 20
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	return s.queryProxyEvents(ctx, since, limit, offset)
-}
-
-func (s *Store) CountProxyEvents(ctx context.Context, since time.Time) (int, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM proxy_events WHERE ts >= ?`, since.Unix()).Scan(&n)
-	return n, err
-}
-
-func (s *Store) queryProxyEvents(ctx context.Context, since time.Time, limit, offset int) ([]ProxyEvent, error) {
+	where, args := f.where()
+	args = append(args, limit, offset)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT e.id, e.ts, COALESCE(e.user_id,0), COALESCE(u.username,''),
                 COALESCE(e.client_id,0), COALESCE(c.name,''),
@@ -625,10 +664,10 @@ func (s *Store) queryProxyEvents(ctx context.Context, since time.Time, limit, of
          FROM proxy_events e
          LEFT JOIN users   u ON u.id = e.user_id
          LEFT JOIN clients c ON c.id = e.client_id
-         WHERE e.ts >= ?
+         WHERE `+where+`
          ORDER BY e.ts DESC, e.id DESC
          LIMIT ? OFFSET ?`,
-		since.Unix(), limit, offset)
+		args...)
 	if err != nil {
 		return nil, err
 	}
@@ -774,6 +813,13 @@ func (s *Store) IsIPAllowed(ctx context.Context, ip string) (bool, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ip_allowlist WHERE ip = ?`, ip).Scan(&count)
 	return count > 0, err
+}
+
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.Repeat("?,", n-1) + "?"
 }
 
 func randomHex(n int) string {

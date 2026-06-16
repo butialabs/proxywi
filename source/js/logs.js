@@ -51,6 +51,8 @@
     function prepend(ev) {
       // Older pages would shift their window unexpectedly if we prepended.
       if (!data.onFirstPage) return;
+      // A filtered view must not gain live rows that don't match the filter.
+      if (data.filtered) return;
       var emptyRow = document.getElementById('logs-empty');
       if (emptyRow) emptyRow.remove();
       var d = ev.data;

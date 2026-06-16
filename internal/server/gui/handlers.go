@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"html/template"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -202,13 +204,39 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	p := periodDefs[periodKey]
 	filterClientID, _ := strconv.ParseInt(q.Get("client_id"), 10, 64)
+	filterUserID, _ := strconv.ParseInt(q.Get("user_id"), 10, 64)
+
+	allClients, _ := g.Store.ListClients(ctx)
+
+	var effIDs []int64
+	scoped := false
+	if filterUserID > 0 {
+		if u, _ := g.Store.UserByID(ctx, filterUserID); u != nil && len(u.AllowedClientIDs) > 0 {
+			effIDs = u.AllowedClientIDs
+			scoped = true
+		}
+	}
+	if filterClientID > 0 {
+		if scoped && !containsID(effIDs, filterClientID) {
+			effIDs = []int64{} // client not in access scope -> show nothing
+		} else {
+			effIDs = []int64{filterClientID}
+		}
+		scoped = true
+	}
 
 	since := time.Now().Add(-p.duration)
-	samples, _ := g.Store.Metrics(ctx, storage.MetricsFilter{
-		Since:         since,
-		ClientID:      filterClientID,
-		BucketSeconds: int64(p.bucket.Seconds()),
-	})
+	var samples []storage.MetricPoint
+	if !(scoped && len(effIDs) == 0) {
+		mf := storage.MetricsFilter{Since: since, BucketSeconds: int64(p.bucket.Seconds())}
+		switch {
+		case len(effIDs) == 1:
+			mf.ClientID = effIDs[0]
+		case len(effIDs) > 1:
+			mf.ClientIDs = effIDs
+		}
+		samples, _ = g.Store.Metrics(ctx, mf)
+	}
 
 	buckets := make(map[int64][2]int64, len(samples))
 	for _, s := range samples {
@@ -228,19 +256,23 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	onlineAgents := g.Registry.Online()
-	if filterClientID > 0 {
+	if scoped {
+		set := make(map[int64]bool, len(effIDs))
+		for _, id := range effIDs {
+			set[id] = true
+		}
 		filtered := onlineAgents[:0]
 		for _, a := range onlineAgents {
-			if a.ID == filterClientID {
+			if set[a.ID] {
 				filtered = append(filtered, a)
 			}
 		}
 		onlineAgents = filtered
 	}
-	allClients, _ := g.Store.ListClients(ctx)
 
 	var totalIn, totalOut, activeConns int64
 	views := make([]agentView, 0, len(onlineAgents))
+	onlineSeed := make([]map[string]any, 0, len(onlineAgents))
 	for _, a := range onlineAgents {
 		activeConns += a.ActiveConns()
 		views = append(views, agentView{
@@ -251,6 +283,7 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 			BytesInHuman:  humanBytes(a.BytesIn()),
 			BytesOutHuman: humanBytes(a.BytesOut()),
 		})
+		onlineSeed = append(onlineSeed, map[string]any{"id": a.ID, "active": a.ActiveConns()})
 	}
 	for _, s := range samples {
 		totalIn += s.BytesIn
@@ -261,14 +294,19 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 	for _, c := range allClients {
 		opts = append(opts, clientOption{ID: c.ID, Name: c.Name})
 	}
+	users, _ := g.Store.ListUsers(ctx)
+	accessOpts := make([]clientOption, 0, len(users))
+	for _, u := range users {
+		accessOpts = append(accessOpts, clientOption{ID: u.ID, Name: u.Username})
+	}
 	pos := make([]periodOption, 0, len(periodOrder))
 	for _, k := range periodOrder {
 		pos = append(pos, periodOption{Value: k, Label: v.tr(periodDefs[k].labelKey)})
 	}
 
 	totalClients := len(allClients)
-	if filterClientID > 0 {
-		totalClients = 1
+	if scoped {
+		totalClients = len(effIDs)
 	}
 
 	g.render(w, r, "dashboard.html", map[string]any{
@@ -282,8 +320,10 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 		"BytesOutHuman":  humanBytes(totalOut),
 		"Online":         views,
 		"ClientOptions":  opts,
+		"AccessOptions":  accessOpts,
 		"PeriodOptions":  pos,
 		"FilterClientID": filterClientID,
+		"FilterUserID":   filterUserID,
 		"FilterPeriod":   periodKey,
 		"PeriodHuman":    v.tr(p.labelKey),
 		"DashboardData": map[string]any{
@@ -291,6 +331,7 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 			"dataIn":      in,
 			"dataOut":     out,
 			"onlineCount": len(views),
+			"online":      onlineSeed,
 			"tr": map[string]string{
 				"in":           v.tr("dashboard.chart_in"),
 				"out":          v.tr("dashboard.chart_out"),
@@ -620,14 +661,25 @@ const logsPageSize = 20
 func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	since := time.Now().Add(-24 * time.Hour)
+	q := r.URL.Query()
 
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	filterUserID, _ := strconv.ParseInt(q.Get("user_id"), 10, 64)
+	filterClientID, _ := strconv.ParseInt(q.Get("client_id"), 10, 64)
+	search := strings.TrimSpace(q.Get("q"))
+	filter := storage.ProxyEventFilter{
+		Since:    since,
+		UserID:   filterUserID,
+		ClientID: filterClientID,
+		Search:   search,
+	}
+
+	page, _ := strconv.Atoi(q.Get("page"))
 	if page < 1 {
 		page = 1
 	}
 	offset := (page - 1) * logsPageSize
 
-	total, _ := g.Store.CountProxyEvents(ctx, since)
+	total, _ := g.Store.CountProxyEventsFiltered(ctx, filter)
 	totalPages := (total + logsPageSize - 1) / logsPageSize
 	if totalPages < 1 {
 		totalPages = 1
@@ -637,7 +689,7 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 		offset = (page - 1) * logsPageSize
 	}
 
-	events, _ := g.Store.ListProxyEventsPage(ctx, since, logsPageSize, offset)
+	events, _ := g.Store.ListProxyEventsFiltered(ctx, filter, logsPageSize, offset)
 	views := make([]logView, 0, len(events))
 	for _, e := range events {
 		views = append(views, logView{
@@ -654,22 +706,58 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 			DurationMS: e.DurationMS,
 		})
 	}
+	clients, _ := g.Store.ListClients(ctx)
+	clientOpts := make([]clientOption, 0, len(clients))
+	for _, c := range clients {
+		clientOpts = append(clientOpts, clientOption{ID: c.ID, Name: c.Name})
+	}
+	users, _ := g.Store.ListUsers(ctx)
+	userOpts := make([]clientOption, 0, len(users))
+	for _, u := range users {
+		userOpts = append(userOpts, clientOption{ID: u.ID, Name: u.Username})
+	}
+
+	// Query string carrying the active filters, appended to pagination links.
+	filterVals := url.Values{}
+	if filterUserID > 0 {
+		filterVals.Set("user_id", strconv.FormatInt(filterUserID, 10))
+	}
+	if filterClientID > 0 {
+		filterVals.Set("client_id", strconv.FormatInt(filterClientID, 10))
+	}
+	if search != "" {
+		filterVals.Set("q", search)
+	}
+	filterQS := ""
+	if enc := filterVals.Encode(); enc != "" {
+		filterQS = "&" + enc
+	}
+	hasFilter := filterUserID > 0 || filterClientID > 0 || search != ""
+
 	v := g.view(r)
 	g.render(w, r, "logs.html", map[string]any{
-		"Title":      "Logs",
-		"Active":     "logs",
-		"User":       g.adminName(ctx),
-		"Events":     views,
-		"Page":       page,
-		"TotalPages": totalPages,
-		"Total":      total,
-		"PrevPage":   page - 1,
-		"NextPage":   page + 1,
-		"HasPrev":    page > 1,
-		"HasNext":    page < totalPages,
+		"Title":          "Logs",
+		"Active":         "logs",
+		"User":           g.adminName(ctx),
+		"Events":         views,
+		"Page":           page,
+		"TotalPages":     totalPages,
+		"Total":          total,
+		"PrevPage":       page - 1,
+		"NextPage":       page + 1,
+		"HasPrev":        page > 1,
+		"HasNext":        page < totalPages,
+		"ClientOptions":  clientOpts,
+		"UserOptions":    userOpts,
+		"FilterUserID":   filterUserID,
+		"FilterClientID": filterClientID,
+		"FilterSearch":   search,
+		"FilterQS":       template.HTML(filterQS),
+		"HasFilter":      hasFilter,
 		"LogsData": map[string]any{
 			"onFirstPage": page <= 1,
 			"pageSize":    logsPageSize,
+			"filtered":    hasFilter,
 			"tr": map[string]string{
 				"connected":    v.tr("logs.live_connected"),
 				"disconnected": v.tr("logs.live_disconnected"),
@@ -777,6 +865,15 @@ func randHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func containsID(ids []int64, want int64) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
 }
 
 func splitCSV(s string) []string {

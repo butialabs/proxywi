@@ -13,6 +13,23 @@
   <div class="card-header bg-body-tertiary d-flex align-items-center flex-wrap gap-2">
     <strong>{{t "logs.live"}}</strong>
     <span class="ms-2 text-body-secondary small">{{tp "logs.total_count" .}}</span>
+    <form class="d-flex align-items-center gap-2 ms-auto flex-wrap" method="get" action="/logs">
+      <select name="user_id" class="form-select form-select-sm" style="width:auto;">
+        <option value="0" {{if eq .FilterUserID 0}}selected{{end}}>{{t "logs.filter_all_users"}}</option>
+        {{range .UserOptions}}
+          <option value="{{.ID}}" {{if eq .ID $.FilterUserID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+      <select name="client_id" class="form-select form-select-sm" style="width:auto;">
+        <option value="0" {{if eq .FilterClientID 0}}selected{{end}}>{{t "logs.filter_all_clients"}}</option>
+        {{range .ClientOptions}}
+          <option value="{{.ID}}" {{if eq .ID $.FilterClientID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+      <input type="search" name="q" class="form-control form-control-sm" style="width:auto;" value="{{.FilterSearch}}" placeholder="{{t "logs.filter_search"}}">
+      <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel"></i></button>
+      {{if .HasFilter}}<a class="btn btn-sm btn-outline-secondary" href="/logs"><i class="bi bi-x-lg"></i></a>{{end}}
+    </form>
   </div>
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0">
@@ -60,12 +77,12 @@
     <nav>
       <ul class="pagination pagination-sm mb-0">
         <li class="page-item {{if not .HasPrev}}disabled{{end}}">
-          <a class="page-link" {{if .HasPrev}}href="?page={{.PrevPage}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+          <a class="page-link" {{if .HasPrev}}href="?page={{.PrevPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
             <i class="bi bi-chevron-left"></i> {{t "logs.page_prev"}}
           </a>
         </li>
         <li class="page-item {{if not .HasNext}}disabled{{end}}">
-          <a class="page-link" {{if .HasNext}}href="?page={{.NextPage}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+          <a class="page-link" {{if .HasNext}}href="?page={{.NextPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
             {{t "logs.page_next"}} <i class="bi bi-chevron-right"></i>
           </a>
         </li>
