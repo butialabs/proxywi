@@ -37,7 +37,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ServerURL:      serverURL,
 		Token:          cfg.Token,
 		TLSInsecure:    cfg.TLSInsecure,
-		ReportPublicIP: cfg.ReportPublicIP,
 		AllowedTargets: cfg.AllowedTargets,
 		DeniedTargets:  cfg.DeniedTargets,
 		Log:            log,

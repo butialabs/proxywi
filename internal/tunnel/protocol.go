@@ -14,7 +14,6 @@ type Handshake struct {
 	Version int    `json:"version"`
 	Token   string `json:"token"`
 	Name    string `json:"name"`
-	SelfReportedIP string `json:"self_reported_ip,omitempty"`
 }
 
 type HandshakeAck struct {

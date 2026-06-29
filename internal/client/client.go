@@ -26,7 +26,6 @@ type Agent struct {
 	ServerURL      string
 	Token          string
 	TLSInsecure    bool
-	ReportPublicIP bool
 	AllowedTargets []string
 	DeniedTargets  []string
 	Log            *slog.Logger
@@ -58,14 +57,9 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	defer ws.CloseNow()
 
-	publicIP := ""
-	if a.ReportPublicIP {
-		publicIP = lookupPublicIP(dialCtx, a.Log)
-	}
 	if err := ws.Write(dialCtx, websocket.MessageText, mustJSON(tunnel.Handshake{
-		Version:        tunnel.ProtocolVersion,
-		Token:          a.Token,
-		SelfReportedIP: publicIP,
+		Version: tunnel.ProtocolVersion,
+		Token:   a.Token,
 	})); err != nil {
 		return fmt.Errorf("write handshake: %w", err)
 	}
@@ -310,14 +304,14 @@ func (a *Agent) isTargetAllowed(ctx context.Context, target string) bool {
 		return true
 	}
 
-	ips, err := net.LookupIPContext(ctx, host)
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		// Cannot resolve: treat as external domain unless explicitly denied.
 		return !a.acl.deniedHosts[host]
 	}
 
-	for _, ip := range ips {
-		addr, ok := netip.AddrFromSlice(ip)
+	for _, ia := range addrs {
+		addr, ok := netip.AddrFromSlice(ia.IP)
 		if !ok {
 			continue
 		}
@@ -338,32 +332,4 @@ func (a *Agent) isTargetAllowed(ctx context.Context, target string) bool {
 	return true
 }
 
-func lookupPublicIP(ctx context.Context, log *slog.Logger) string {
-	endpoints := []string{"https://ifconfig.me/ip", "https://icanhazip.com"}
-	client := &http.Client{Timeout: 5 * time.Second}
-	for _, endpoint := range endpoints {
-		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
-		if err != nil {
-			cancel()
-			continue
-		}
-		req.Header.Set("User-Agent", "curl/8.0")
-		resp, err := client.Do(req)
-		cancel()
-		if err != nil {
-			log.Debug("public ip lookup failed", "endpoint", endpoint, "err", err)
-			continue
-		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
-		resp.Body.Close()
-		if err != nil || resp.StatusCode != http.StatusOK {
-			continue
-		}
-		ip := strings.TrimSpace(string(body))
-		if net.ParseIP(ip) != nil {
-			return ip
-		}
-	}
-	return ""
-}
+

@@ -21,12 +21,11 @@ type Server struct {
 }
 
 type Client struct {
-	Server          string
-	Token           string
-	TLSInsecure     bool
-	ReportPublicIP  bool
-	AllowedTargets  []string
-	DeniedTargets   []string
+	Server         string
+	Token          string
+	TLSInsecure    bool
+	AllowedTargets []string
+	DeniedTargets  []string
 }
 
 func LoadServer() (Server, error) {
@@ -47,7 +46,6 @@ func LoadClient() (Client, error) {
 		Server:         os.Getenv("PROXYWI_SERVER"),
 		Token:          os.Getenv("PROXYWI_TOKEN"),
 		TLSInsecure:    boolEnv("PROXYWI_TLS_INSECURE"),
-		ReportPublicIP: boolEnv("PROXYWI_REPORT_PUBLIC_IP"),
 		AllowedTargets: splitEnv(os.Getenv("PROXYWI_ALLOWED_TARGETS")),
 		DeniedTargets:  splitEnv(os.Getenv("PROXYWI_DENIED_TARGETS")),
 	}

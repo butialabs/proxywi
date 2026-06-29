@@ -89,3 +89,4 @@ internal/server/gui/dist/css/app.css
 internal/server/gui/dist/js/app.js
 data/
 .worktrees/
+.tools/
