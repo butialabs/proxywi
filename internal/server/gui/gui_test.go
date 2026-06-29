@@ -35,7 +35,7 @@ func TestAuthRateLimit_AllowsThenBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	g := &GUI{Store: store, Limiter: server.NewRateLimiter()}
 	h := g.authRateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

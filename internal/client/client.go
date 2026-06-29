@@ -56,7 +56,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	ws.SetReadLimit(-1)
 
-	defer ws.CloseNow()
+	defer func() { _ = ws.CloseNow() }()
 
 	if err := ws.Write(dialCtx, websocket.MessageText, mustJSON(tunnel.Handshake{
 		Version:      tunnel.ProtocolVersion,
@@ -83,7 +83,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.Log.Info("tunnel established", "client_id", ack.ClientID, "server", a.ServerURL)
 
 	netConn := websocket.NetConn(context.Background(), ws, websocket.MessageBinary)
-	defer netConn.Close()
+	defer func() { _ = netConn.Close() }()
 
 	yCfg := yamux.DefaultConfig()
 	yCfg.EnableKeepAlive = true
@@ -94,13 +94,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("yamux client: %w", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	metaStream, err := session.Open()
 	if err != nil {
 		return fmt.Errorf("open meta stream: %w", err)
 	}
-	defer metaStream.Close()
+	defer func() { _ = metaStream.Close() }()
 
 	var counters counters
 	go a.metaLoop(ctx, metaStream, &counters)
@@ -124,7 +124,7 @@ type counters struct {
 }
 
 func (a *Agent) handleStream(ctx context.Context, stream net.Conn, c *counters) {
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	_ = stream.SetDeadline(time.Now().Add(10 * time.Second))
 
 	br := bufio.NewReader(stream)
@@ -146,7 +146,7 @@ func (a *Agent) handleStream(ctx context.Context, stream net.Conn, c *counters) 
 		_ = tunnel.WriteJSONLine(stream, tunnel.ProxyReply{OK: false, Error: err.Error()})
 		return
 	}
-	defer target.Close()
+	defer func() { _ = target.Close() }()
 
 	if err := tunnel.WriteJSONLine(stream, tunnel.ProxyReply{OK: true}); err != nil {
 		return
@@ -324,10 +324,7 @@ func (a *Agent) isTargetAllowed(ctx context.Context, target string) bool {
 		}
 		for _, p := range a.acl.deniedNets {
 			if p.Contains(addr) {
-				if a.acl.allowedHosts[host] {
-					return true
-				}
-				return false
+				return a.acl.allowedHosts[host]
 			}
 		}
 	}

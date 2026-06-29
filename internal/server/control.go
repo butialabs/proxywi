@@ -86,7 +86,7 @@ func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	netConn := websocket.NetConn(context.Background(), ws, websocket.MessageBinary)
-	defer netConn.Close()
+	defer func() { _ = netConn.Close() }()
 
 	yCfg := yamux.DefaultConfig()
 	yCfg.EnableKeepAlive = true
@@ -98,7 +98,7 @@ func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 		c.Log.Warn("yamux server", "err", err)
 		return
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	agent := &Agent{
 		ID:           clientID,
@@ -137,7 +137,7 @@ func (c *Control) readMetaStream(ctx context.Context, agent *Agent) {
 	if err != nil {
 		return
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	br := bufio.NewReader(stream)
 	ticker := time.NewTicker(30 * time.Second)

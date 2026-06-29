@@ -648,10 +648,3 @@ func humanSince(t time.Time) string {
 	return humanDuration(time.Since(t)) + " ago"
 }
 
-func humanUntil(t time.Time) string {
-	d := time.Until(t)
-	if d <= 0 {
-		return "expired"
-	}
-	return "in " + humanDuration(d)
-}

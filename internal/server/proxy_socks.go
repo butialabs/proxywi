@@ -65,7 +65,7 @@ func (s *SOCKSProxy) Serve(ln net.Listener) error {
 }
 
 func (s *SOCKSProxy) handle(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
 	ctx := context.Background()
 
@@ -123,7 +123,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", 0, 0, 0)
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 
 	upReader := bufio.NewReader(upstream)
 	var reply tunnel.ProxyReply

@@ -116,7 +116,7 @@ func (s *Store) CreateFirstAdmin(ctx context.Context, username, email, passwordH
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var n int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM admins`).Scan(&n); err != nil {
@@ -139,7 +139,7 @@ func (s *Store) ListAdmins(ctx context.Context) ([]Admin, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Admin
 	for rows.Next() {
 		var a Admin
@@ -306,14 +306,14 @@ func (s *Store) NormalizeLegacyClientNames(ctx context.Context) error {
 		var id int64
 		var name string
 		if err := rows.Scan(&id, &name); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		if !clientNameRe.MatchString(name) {
 			legacyIDs = append(legacyIDs, id)
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}
@@ -334,7 +334,7 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Client
 	for rows.Next() {
 		var c Client
@@ -384,7 +384,7 @@ func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]string, err
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[int64]string{}
 	for rows.Next() {
 		var id int64
@@ -473,7 +473,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []User
 	for rows.Next() {
 		var u User
@@ -526,7 +526,7 @@ func (s *Store) UserUsageStats(ctx context.Context) (map[int64]UserUsage, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[int64]UserUsage{}
 	for rows.Next() {
 		var uid int64
@@ -595,7 +595,7 @@ func (s *Store) Metrics(ctx context.Context, f MetricsFilter) ([]MetricPoint, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []MetricPoint
 	for rows.Next() {
 		var p MetricPoint
@@ -748,7 +748,7 @@ func (s *Store) ListProxyEventsFiltered(ctx context.Context, f ProxyEventFilter,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []ProxyEvent
 	for rows.Next() {
 		var p ProxyEvent

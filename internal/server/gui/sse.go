@@ -29,7 +29,9 @@ func (g *GUI) stream(w http.ResponseWriter, r *http.Request, accept map[string]b
 	sub, cancel := g.Hub.Subscribe()
 	defer cancel()
 
-	fmt.Fprintf(w, ": ok\n\n")
+	if _, err := fmt.Fprintf(w, ": ok\n\n"); err != nil {
+		return
+	}
 	flusher.Flush()
 
 	keepalive := time.NewTicker(25 * time.Second)

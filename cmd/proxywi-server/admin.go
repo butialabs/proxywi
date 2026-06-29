@@ -52,7 +52,7 @@ The database is read from PROXYWI_DATA_DIR (default: ./data).
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 

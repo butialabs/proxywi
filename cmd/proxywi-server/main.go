@@ -76,7 +76,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	if err := store.NormalizeLegacyClientNames(ctx); err != nil {
 		log.Warn("normalize client names", "err", err)

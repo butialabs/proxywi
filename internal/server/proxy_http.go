@@ -85,7 +85,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", 0, 0, 0)
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 
 	upReader := bufio.NewReader(upstream)
 	var reply tunnel.ProxyReply
@@ -111,7 +111,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", 0, 0, 0)
 		return
 	}
-	defer clientConn.Close()
+	defer func() { _ = clientConn.Close() }()
 
 	start := time.Now()
 	var bytesIn, bytesOut int64
@@ -155,7 +155,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			bytesIn, bytesOut, time.Since(start).Milliseconds())
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	stripHopByHopHeaders(resp.Header)
 
