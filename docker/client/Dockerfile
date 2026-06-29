@@ -10,6 +10,7 @@ COPY cmd/proxywi-client  ./cmd/proxywi-client
 COPY internal/config      ./internal/config
 COPY internal/client      ./internal/client
 COPY internal/tunnel      ./internal/tunnel
+COPY internal/version     ./internal/version
 
 ENV CGO_ENABLED=0
 

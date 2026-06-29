@@ -1,0 +1,2 @@
+-- Destructive migration
+-- This down migration is intentionally a no-op.

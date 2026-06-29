@@ -12,6 +12,7 @@ import (
 
 	"github.com/butialabs/proxywi/internal/client"
 	"github.com/butialabs/proxywi/internal/config"
+	"github.com/butialabs/proxywi/internal/version"
 )
 
 func main() {
@@ -39,6 +40,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		TLSInsecure:    cfg.TLSInsecure,
 		AllowedTargets: cfg.AllowedTargets,
 		DeniedTargets:  cfg.DeniedTargets,
+		AgentVersion:   version.Version,
 		Log:            log,
 	}
 

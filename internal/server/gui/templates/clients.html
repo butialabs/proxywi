@@ -1,5 +1,5 @@
 {{define "content"}}
-<div x-data="{ open:false, title:'', text:'', regen:'', async view(id, n){ this.title=n; this.regen='/clients/'+id+'/regenerate'; this.text=''; this.open=true; try { this.text = await (await fetch('/clients/'+id+'/compose', {credentials:'same-origin'})).text(); } catch(e) { this.text=''; } } }">
+<div id="clients-page">
 
   <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
     <h3 class="text-xl font-semibold">{{t "clients.title"}}</h3>
@@ -16,7 +16,7 @@
     </div>
     <div class="p-4">
       <p class="text-dim text-sm mb-2">{{t "clients.compose_help"}}</p>
-      <textarea class="compose w-full bg-soft border border-border-hi p-2 text-accent-hi text-sm" rows="8" readonly data-copied-label="{{t "clients.compose_copied"}}" onclick="copyCompose(this)">{{.NewCompose}}</textarea>
+      <textarea class="compose w-full bg-soft border border-border-hi p-2 text-accent-hi text-sm" rows="8" readonly data-copied-label="{{t "clients.compose_copied"}}">{{.NewCompose}}</textarea>
     </div>
   </div>
   {{end}}
@@ -28,6 +28,7 @@
           <tr class="text-dim text-xs uppercase">
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "clients.col_id"}}</th>
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "clients.col_name"}}</th>
+            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "clients.col_version"}}</th>
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "clients.col_status"}}</th>
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "clients.col_last_seen"}}</th>
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi"></th>
@@ -38,21 +39,22 @@
           <tr class="border-b border-border hover:bg-accent/5">
             <td class="px-3 py-2 text-dim">{{.ID}}</td>
             <td class="px-3 py-2 font-semibold">{{.Name}}</td>
-            <td class="px-3 py-2">{{if .Online}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-accent/15 text-accent"><i class="bi bi-circle-fill" style="font-size:.55em;"></i>{{t "clients.status_online"}}</span>{{else}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim"><i class="bi bi-circle" style="font-size:.55em;"></i>{{t "clients.status_offline"}}</span>{{end}}</td>
+            <td class="px-3 py-2 text-dim text-xs">{{if .AgentVersion}}{{.AgentVersion}}{{else}}—{{end}}</td>
+            <td class="px-3 py-2">{{if .Online}}<span class="inline-flex items-center gap-1 text-accent">{{t "clients.status_online"}}</span>{{else}}<span class="inline-flex items-center gap-1 text-dim">{{t "clients.status_offline"}}</span>{{end}}</td>
             <td class="px-3 py-2 text-dim text-xs">{{.LastSeenHuman}}</td>
             <td class="px-3 py-2 text-right whitespace-nowrap">
-              <button type="button" class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5"
-                      title="{{t "clients.action_view_compose"}}" @click="view({{.ID}}, '{{.Name}}')">
+              <button type="button" class="js-view-compose inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5"
+                      title="{{t "clients.action_view_compose"}}" data-id="{{.ID}}" data-name="{{.Name}}">
                 <i class="bi bi-file-earmark-code"></i>
               </button>
-              <form method="post" action="/clients/{{.ID}}/delete" class="inline" onsubmit="return confirm('{{tp "clients.confirm_delete" .}}');">
+              <form method="post" action="/clients/{{.ID}}/delete" class="inline js-confirm" data-confirm="{{tp "clients.confirm_delete" .}}">
                 <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
                 <button class="inline-flex items-center gap-1 border border-danger/55 text-danger px-2 py-1 text-sm hover:bg-danger/10" title="{{t "clients.action_delete"}}"><i class="bi bi-trash"></i></button>
               </form>
             </td>
           </tr>
         {{else}}
-          <tr><td colspan="5" class="text-center text-dim p-4">{{t "clients.empty"}}</td></tr>
+          <tr><td colspan="6" class="text-center text-dim p-4">{{t "clients.empty"}}</td></tr>
         {{end}}
         </tbody>
       </table>
@@ -60,27 +62,26 @@
   </div>
 
   <!-- compose modal -->
-  <div x-show="open" x-cloak @keydown.escape.window="open=false" class="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 overflow-auto">
-    <div class="bg-panel border border-border w-full max-w-2xl mt-10" @click.outside="open=false">
+  <div id="compose-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 overflow-auto">
+    <div class="compose-modal-content bg-panel border border-border w-full max-w-2xl mt-10">
       <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium">
-        <i class="bi bi-file-earmark-code"></i><strong x-text="title"></strong>
-        <button type="button" class="ml-auto text-dim hover:text-fg" @click="open=false"><i class="bi bi-x-lg"></i></button>
+        <i class="bi bi-file-earmark-code"></i><strong id="compose-modal-title"></strong>
+        <button type="button" class="js-close-modal ml-auto text-dim hover:text-fg"><i class="bi bi-x-lg"></i></button>
       </div>
       <div class="p-4">
         <p class="text-dim text-sm mb-2">{{t "clients.compose_view_help"}}</p>
-        <textarea class="compose w-full bg-soft border border-border-hi p-2 text-accent-hi text-sm" rows="10" readonly x-model="text" data-copied-label="{{t "clients.compose_copied"}}" onclick="copyCompose(this)"></textarea>
+        <textarea id="compose-modal-text" class="compose w-full bg-soft border border-border-hi p-2 text-accent-hi text-sm" rows="10" readonly data-copied-label="{{t "clients.compose_copied"}}"></textarea>
       </div>
       <div class="bg-soft border-t border-border px-4 py-2 flex items-center gap-2">
-        <form method="post" :action="regen" class="mr-auto" :data-client-name="title" onsubmit="return confirmRegenerate(this);">
+        <form method="post" id="compose-modal-regen" action="" class="mr-auto js-confirm" data-confirm="{{t "clients.confirm_regenerate"}}">
           <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
           <button class="inline-flex items-center gap-1 border border-amber/55 text-amber px-2 py-1 text-sm hover:bg-amber/10"><i class="bi bi-arrow-repeat"></i>{{t "clients.action_regenerate"}}</button>
         </form>
-        <button type="button" class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" @click="open=false">{{t "clients.compose_close"}}</button>
+        <button type="button" class="js-close-modal inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5">{{t "clients.compose_close"}}</button>
       </div>
     </div>
   </div>
 
 </div>
-<script id="clients-data" type="application/json">{{json .ClientsData}}</script>
 {{end}}
 {{template "layout" .}}

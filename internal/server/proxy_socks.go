@@ -69,13 +69,6 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
 	ctx := context.Background()
 
-	sourceIP, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-
-	if err := s.Gate.CheckPreAuth(ctx, sourceIP); err != nil {
-		s.logEvent(ctx, 0, "", 0, "", "", sourceIP, "socks", "denied", 0, 0, 0)
-		return
-	}
-
 	br := bufio.NewReader(conn)
 
 	methods, ok := readGreeting(br)
@@ -97,15 +90,13 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 
 	u, authed := s.Gate.VerifyCredentials(ctx, username, password)
 	if !authed {
-		s.Gate.RegisterFailure(ctx, sourceIP, username, "socks")
 		_, _ = conn.Write([]byte{0x01, 0x01})
-		s.logEvent(ctx, 0, username, 0, "", "", sourceIP, "socks", "denied", 0, 0, 0)
+		s.logEvent(ctx, 0, username, 0, "", "", "socks", "denied", 0, 0, 0)
 		return
 	}
-	if !s.Gate.VerifySourceAllowed(u, sourceIP) {
-		s.Gate.RegisterFailure(ctx, sourceIP, username, "socks")
+	if !s.Gate.AllowProxyRequest(u.Username) {
 		_, _ = conn.Write([]byte{0x01, 0x01})
-		s.logEvent(ctx, u.ID, u.Username, 0, "", "", sourceIP, "socks", "denied", 0, 0, 0)
+		s.logEvent(ctx, u.ID, u.Username, 0, "", "", "socks", "denied", 0, 0, 0)
 		return
 	}
 	if _, err := conn.Write([]byte{0x01, 0x00}); err != nil {
@@ -117,10 +108,10 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 		return
 	}
 
-	agent, err := s.Registry.PickNextAllowed(u.AllowedClientIDs)
+	agent, err := s.Registry.PickNext()
 	if err != nil {
 		_, _ = conn.Write(socksReply(socksRepNetUnreach))
-		s.logEvent(ctx, u.ID, u.Username, 0, "", target, sourceIP, "socks", "failed", 0, 0, 0)
+		s.logEvent(ctx, u.ID, u.Username, 0, "", target, "socks", "failed", 0, 0, 0)
 		return
 	}
 
@@ -129,7 +120,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	cancel()
 	if err != nil {
 		_, _ = conn.Write(socksReply(socksRepHostUnreac))
-		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "socks", "failed", 0, 0, 0)
+		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", 0, 0, 0)
 		return
 	}
 	defer upstream.Close()
@@ -138,12 +129,12 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	var reply tunnel.ProxyReply
 	if err := tunnel.ReadJSONLine(upReader, &reply); err != nil {
 		_, _ = conn.Write(socksReply(socksRepGeneralErr))
-		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "socks", "failed", 0, 0, 0)
+		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", 0, 0, 0)
 		return
 	}
 	if !reply.OK {
 		_, _ = conn.Write(socksReply(socksRepConnRefuse))
-		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "socks", "failed", 0, 0, 0)
+		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", 0, 0, 0)
 		return
 	}
 
@@ -164,16 +155,15 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	}
 
 	bytesIn, bytesOut = pipe(conn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
-	s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "socks", "ok",
+	s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "ok",
 		bytesIn, bytesOut, time.Since(start).Milliseconds())
 }
 
 func (s *SOCKSProxy) logEvent(ctx context.Context,
 	userID int64, user string,
 	clientID int64, clientName string,
-	target, sourceIP, proto, outcome string,
+	target, proto, outcome string,
 	bIn, bOut, durMS int64) {
-	origin := s.Gate.Origin(sourceIP)
 	ev := storage.ProxyEvent{
 		TS:         time.Now(),
 		UserID:     userID,
@@ -181,7 +171,6 @@ func (s *SOCKSProxy) logEvent(ctx context.Context,
 		ClientID:   clientID,
 		ClientName: clientName,
 		TargetHost: target,
-		SourceIP:   origin,
 		Protocol:   proto,
 		Outcome:    outcome,
 		BytesIn:    bIn,
@@ -198,7 +187,7 @@ func (s *SOCKSProxy) logEvent(ctx context.Context,
 			Type: "proxy_event",
 			Data: ProxyLogEvent{
 				ID: id, TS: ev.TS.Unix(),
-				Origin: ShortOrigin(origin), User: user,
+				User: user,
 				ClientID: clientID, ClientName: clientName,
 				Target: target, Protocol: proto,
 				BytesIn: bIn, BytesOut: bOut,

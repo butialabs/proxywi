@@ -1,14 +1,15 @@
 {{define "content"}}
-<div x-data="{ modal:null, form:{id:null, username:'', cidrs:'', clientIds:[]},
-  proxyOpen:false, httpsURL:'', socksURL:'', host:'{{.ProxyHost}}',
-  openNew(){ this.form={id:null,username:'',cidrs:'',clientIds:[]}; this.modal='new'; },
-  openEdit(id,username,cidrs,ids){ this.form={id:id,username:username,cidrs:cidrs,clientIds:(ids?String(ids).split(',').filter(Boolean):[])}; this.modal='edit'; },
-  showProxy(u){ this.httpsURL='https://'+u+':{password}@'+this.host+':8443'; this.socksURL='socks5h://'+u+':{password}@'+this.host+':1080'; this.proxyOpen=true; },
-  copyText(el){ el.select(); try{ navigator.clipboard.writeText(el.value); }catch(e){} } }">
+<div id="access-page" data-proxy-host="{{.ProxyHost}}"
+     data-title-new="{{t "access.modal_title"}}"
+     data-title-edit="{{t "access.edit_modal_title"}}"
+     data-password="{{t "access.field_password"}}"
+     data-password-optional="{{t "access.field_password_optional"}}"
+     data-create="{{t "access.create"}}"
+     data-save="{{t "access.save"}}">
 
   <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
     <h3 class="text-xl font-semibold">{{t "access.title"}}</h3>
-    <button class="inline-flex items-center gap-1 bg-accent text-bg px-3 py-1.5 text-sm font-medium hover:bg-accent-hi" @click="openNew()"><i class="bi bi-plus-lg"></i>{{t "access.new"}}</button>
+    <button id="access-new" class="inline-flex items-center gap-1 bg-accent text-bg px-3 py-1.5 text-sm font-medium hover:bg-accent-hi"><i class="bi bi-plus-lg"></i>{{t "access.new"}}</button>
   </div>
 
   <div class="bg-panel border border-border">
@@ -18,8 +19,6 @@
           <tr class="text-dim text-xs uppercase">
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "access.col_id"}}</th>
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "access.col_user"}}</th>
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "access.col_allowed_cidrs"}}</th>
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "access.col_allowed_clients"}}</th>
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "access.col_last_used"}}</th>
             <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "access.col_used"}}</th>
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi"></th>
@@ -30,33 +29,25 @@
           <tr class="border-b border-border hover:bg-accent/5">
             <td class="px-3 py-2 text-dim">{{.ID}}</td>
             <td class="px-3 py-2 font-semibold">{{.Username}}</td>
-            <td class="px-3 py-2">{{if .AllowedSourceCIDRs}}{{range .AllowedSourceCIDRs}}<code class="font-mono text-accent-hi bg-accent/10 border border-accent/15 px-1.5 py-0.5 mr-1">{{.}}</code>{{end}}{{else}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim">{{t "access.any_source"}}</span>{{end}}</td>
-            <td class="px-3 py-2">
-              {{if .AllClients}}
-                <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-accent/15 text-accent">{{t "access.all_clients"}}</span>
-              {{else}}
-                {{range .AllowedClientNames}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim mr-1">{{.}}</span>{{end}}
-              {{end}}
-            </td>
             <td class="px-3 py-2 text-dim text-xs">{{.LastUsedHuman}}</td>
             <td class="px-3 py-2 text-right tabular-nums">{{.UsedCount}}</td>
             <td class="px-3 py-2 text-right whitespace-nowrap">
-              <button type="button" class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5"
-                      title="{{t "access.action_proxy_url"}}" @click="showProxy('{{.Username}}')">
+              <button type="button" class="js-show-proxy inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5"
+                      title="{{t "access.action_proxy_url"}}" data-username="{{.Username}}">
                 <i class="bi bi-link-45deg"></i>
               </button>
-              <button type="button" class="inline-flex items-center gap-1 border border-accent/55 text-accent px-2 py-1 text-sm hover:bg-accent/10"
-                      title="{{t "access.action_edit"}}" @click="openEdit({{.ID}}, '{{.Username}}', '{{.CIDRsCSV}}', '{{.ClientIDsCSV}}')">
+              <button type="button" class="js-edit-access inline-flex items-center gap-1 border border-accent/55 text-accent px-2 py-1 text-sm hover:bg-accent/10"
+                      title="{{t "access.action_edit"}}" data-id="{{.ID}}" data-username="{{.Username}}">
                 <i class="bi bi-pencil"></i>
               </button>
-              <form method="post" action="/access/{{.ID}}/delete" class="inline" onsubmit="return confirm('{{tp "access.confirm_delete" .}}');">
+              <form method="post" action="/access/{{.ID}}/delete" class="inline js-confirm" data-confirm="{{tp "access.confirm_delete" .}}">
                 <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
                 <button class="inline-flex items-center gap-1 border border-danger/55 text-danger px-2 py-1 text-sm hover:bg-danger/10" title="{{t "access.action_delete"}}"><i class="bi bi-trash"></i></button>
               </form>
             </td>
           </tr>
         {{else}}
-          <tr><td colspan="7" class="text-center text-dim p-4">{{t "access.empty"}}</td></tr>
+          <tr><td colspan="5" class="text-center text-dim p-4">{{t "access.empty"}}</td></tr>
         {{end}}
         </tbody>
       </table>
@@ -64,68 +55,48 @@
   </div>
 
   <!-- new/edit access modal -->
-  <div x-show="modal" x-cloak @keydown.escape.window="modal=null" class="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 overflow-auto">
-    <div class="bg-panel border border-border w-full max-w-lg mt-10" @click.outside="modal=null">
-      <form method="post" :action="modal==='edit' ? '/access/'+form.id+'/edit' : '/access/new'">
+  <div id="access-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 overflow-auto">
+    <div class="access-modal-content bg-panel border border-border w-full max-w-lg mt-10">
+      <form id="access-form" method="post" action="/access/new">
         <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
         <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium">
-          <i class="bi" :class="modal==='edit' ? 'bi-pencil' : 'bi-plus-circle'"></i>
-          <span x-text="modal==='edit' ? '{{t "access.edit_modal_title"}}' : '{{t "access.modal_title"}}'"></span>
-          <button type="button" class="ml-auto text-dim hover:text-fg" @click="modal=null"><i class="bi bi-x-lg"></i></button>
+          <i id="access-modal-icon" class="bi bi-plus-circle"></i>
+          <span id="access-modal-title">{{t "access.modal_title"}}</span>
+          <button type="button" class="js-close-modal ml-auto text-dim hover:text-fg"><i class="bi bi-x-lg"></i></button>
         </div>
         <div class="p-4 flex flex-col gap-3">
           <div>
             <label class="block text-sm text-dim mb-1">{{t "access.field_username"}}</label>
-            <input class="w-full bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40" name="username" x-model="form.username" required>
+            <input id="access-username" class="w-full bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40" name="username" required>
           </div>
           <div>
-            <label class="block text-sm text-dim mb-1"><span x-show="modal==='new'">{{t "access.field_password"}}</span><span x-show="modal==='edit'" x-cloak>{{t "access.field_password_optional"}}</span></label>
-            <input type="password" class="w-full bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40" name="password" autocomplete="new-password" :required="modal==='new'">
-          </div>
-          <div>
-            <label class="block text-sm text-dim mb-1">{{t "access.field_cidrs"}}</label>
-            <input class="w-full bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40" name="cidrs" x-model="form.cidrs" placeholder="200.10.0.0/16,203.0.113.5/32">
-          </div>
-          <div>
-            <label class="block text-sm text-dim mb-1">{{t "access.field_clients"}}</label>
-            <div class="text-xs text-dim mb-2">{{t "access.field_clients_help"}}</div>
-            {{if .ClientOptions}}
-              <div class="border border-border-hi p-2 max-h-56 overflow-auto flex flex-col gap-1">
-                {{range .ClientOptions}}
-                  <label class="flex items-center gap-2">
-                    <input type="checkbox" class="accent-[--color-accent]" name="client_ids" value="{{.ID}}" x-model="form.clientIds">
-                    <span>{{.Name}} <span class="text-dim text-xs">#{{.ID}}</span></span>
-                  </label>
-                {{end}}
-              </div>
-            {{else}}
-              <div class="text-dim text-sm">{{t "access.no_clients"}}</div>
-            {{end}}
+            <label id="access-password-label" class="block text-sm text-dim mb-1">{{t "access.field_password"}}</label>
+            <input type="password" id="access-password" class="w-full bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40" name="password" autocomplete="new-password">
           </div>
         </div>
         <div class="bg-soft border-t border-border px-4 py-2 flex justify-end">
-          <button type="submit" class="inline-flex items-center gap-1 bg-accent text-bg px-3 py-1.5 text-sm font-medium hover:bg-accent-hi"><span x-show="modal==='new'">{{t "access.create"}}</span><span x-show="modal==='edit'" x-cloak>{{t "access.save"}}</span></button>
+          <button type="submit" id="access-submit" class="inline-flex items-center gap-1 bg-accent text-bg px-3 py-1.5 text-sm font-medium hover:bg-accent-hi">{{t "access.create"}}</button>
         </div>
       </form>
     </div>
   </div>
 
   <!-- proxy URL modal -->
-  <div x-show="proxyOpen" x-cloak @keydown.escape.window="proxyOpen=false" class="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 overflow-auto">
-    <div class="bg-panel border border-border w-full max-w-xl mt-10" @click.outside="proxyOpen=false">
+  <div id="proxy-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 overflow-auto">
+    <div class="proxy-modal-content bg-panel border border-border w-full max-w-xl mt-10">
       <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium">
         <i class="bi bi-link-45deg"></i>{{t "access.proxy_modal_title"}}
-        <button type="button" class="ml-auto text-dim hover:text-fg" @click="proxyOpen=false"><i class="bi bi-x-lg"></i></button>
+        <button type="button" class="js-close-modal ml-auto text-dim hover:text-fg"><i class="bi bi-x-lg"></i></button>
       </div>
       <div class="p-4 flex flex-col gap-3">
         <p class="text-dim text-sm">{{t "access.proxy_hint"}}</p>
         <div>
           <label class="block text-sm text-dim mb-1">{{t "access.proxy_https"}}</label>
-          <input readonly x-model="httpsURL" @click="copyText($event.target)" class="w-full bg-soft border border-border-hi px-2 py-1.5 text-accent-hi font-mono text-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent/40">
+          <input readonly id="proxy-https" class="js-copy w-full bg-soft border border-border-hi px-2 py-1.5 text-accent-hi font-mono text-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent/40">
         </div>
         <div>
           <label class="block text-sm text-dim mb-1">{{t "access.proxy_socks"}}</label>
-          <input readonly x-model="socksURL" @click="copyText($event.target)" class="w-full bg-soft border border-border-hi px-2 py-1.5 text-accent-hi font-mono text-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent/40">
+          <input readonly id="proxy-socks" class="js-copy w-full bg-soft border border-border-hi px-2 py-1.5 text-accent-hi font-mono text-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent/40">
         </div>
       </div>
     </div>

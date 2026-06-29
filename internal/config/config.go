@@ -1,23 +1,21 @@
 package config
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
 type Server struct {
-	HTTPAddr    string
-	SOCKSAddr   string
-	MainAddr    string
-	MainDomain  string
-	ProxyDomain string
-	DataDir     string
-	IPHashSecret []byte
+	HTTPAddr      string
+	SOCKSAddr     string
+	MainAddr      string
+	MainDomain    string
+	ProxyDomain   string
+	DataDir       string
 	ProxyProtocol bool
+	AdminUsername string
+	AdminPassword string
 }
 
 type Client struct {
@@ -37,6 +35,8 @@ func LoadServer() (Server, error) {
 		ProxyDomain:   env("PROXYWI_PROXY_DOMAIN", "pomar.proxywi.xyz"),
 		DataDir:       env("PROXYWI_DATA_DIR", "./data"),
 		ProxyProtocol: boolEnv("PROXYWI_PROXY_PROTOCOL"),
+		AdminUsername: os.Getenv("ADMIN_USERNAME"),
+		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
 	}
 	return s, nil
 }
@@ -74,26 +74,6 @@ func splitEnv(s string) []string {
 		}
 	}
 	return out
-}
-
-func LoadOrCreateIPHashSecret(dataDir string) ([]byte, error) {
-	if v := strings.TrimSpace(os.Getenv("PROXYWI_IP_HASH_SECRET")); v != "" {
-		return []byte(v), nil
-	}
-	path := filepath.Join(dataDir, ".ip_hash_key")
-	if raw, err := os.ReadFile(path); err == nil {
-		if key, err := hex.DecodeString(strings.TrimSpace(string(raw))); err == nil && len(key) > 0 {
-			return key, nil
-		}
-	}
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("generate ip hash secret: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(hex.EncodeToString(key)), 0o600); err != nil {
-		return nil, fmt.Errorf("persist ip hash secret: %w", err)
-	}
-	return key, nil
 }
 
 func env(key, def string) string {

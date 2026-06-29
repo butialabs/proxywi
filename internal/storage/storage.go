@@ -241,12 +241,13 @@ func (s *Store) DeleteTokenSession(ctx context.Context, id string) error {
 }
 
 type Client struct {
-	ID        int64
-	Name      string
-	TokenHash string
-	TokenID   string
-	LastSeen  time.Time
-	CreatedAt time.Time
+	ID           int64
+	Name         string
+	TokenHash    string
+	TokenID      string
+	AgentVersion string
+	LastSeen     time.Time
+	CreatedAt    time.Time
 }
 
 func TokenIDFromToken(token string) string {
@@ -329,7 +330,7 @@ func (s *Store) NormalizeLegacyClientNames(ctx context.Context) error {
 }
 
 func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, token_hash, token_id, last_seen_at, created_at FROM clients ORDER BY id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, token_hash, token_id, COALESCE(agent_version,''), last_seen_at, created_at FROM clients ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +339,7 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 	for rows.Next() {
 		var c Client
 		var last, created int64
-		if err := rows.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &last, &created); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &c.AgentVersion, &last, &created); err != nil {
 			return nil, err
 		}
 		c.LastSeen = time.Unix(last, 0)
@@ -349,10 +350,10 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 }
 
 func (s *Store) ClientByID(ctx context.Context, id int64) (*Client, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, token_id, last_seen_at, created_at FROM clients WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, token_id, COALESCE(agent_version,''), last_seen_at, created_at FROM clients WHERE id = ?`, id)
 	var c Client
 	var last, created int64
-	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &last, &created); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &c.AgentVersion, &last, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -364,10 +365,10 @@ func (s *Store) ClientByID(ctx context.Context, id int64) (*Client, error) {
 }
 
 func (s *Store) ClientByTokenID(ctx context.Context, tokenID string) (*Client, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, token_id, last_seen_at, created_at FROM clients WHERE token_id = ?`, tokenID)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, token_id, COALESCE(agent_version,''), last_seen_at, created_at FROM clients WHERE token_id = ?`, tokenID)
 	var c Client
 	var last, created int64
-	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &last, &created); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &c.AgentVersion, &last, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -396,7 +397,13 @@ func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]string, err
 	return out, rows.Err()
 }
 
-func (s *Store) MarkClientSeen(ctx context.Context, id int64) error {
+func (s *Store) MarkClientSeen(ctx context.Context, id int64, agentVersion string) error {
+	if agentVersion != "" {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE clients SET last_seen_at = ?, agent_version = ? WHERE id = ?`,
+			time.Now().Unix(), agentVersion, id)
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE clients SET last_seen_at = ? WHERE id = ?`,
 		time.Now().Unix(), id)
 	return err
@@ -418,93 +425,30 @@ func (s *Store) DeleteClient(ctx context.Context, id int64) error {
 }
 
 type User struct {
-	ID                 int64
-	Username           string
-	PasswordHash       string
-	AllowedSourceCIDRs []string
-	AllowedClientIDs   []int64
-	CreatedAt          time.Time
+	ID           int64
+	Username     string
+	PasswordHash string
+	CreatedAt    time.Time
 }
 
-func (s *Store) CreateUser(ctx context.Context, username, passwordHash string, allowedCIDRs []string, allowedClientIDs []int64) (int64, error) {
+func (s *Store) CreateUser(ctx context.Context, username, passwordHash string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO users (username, password_hash, allowed_source_cidrs, created_at) VALUES (?, ?, ?, ?)`,
-		username, passwordHash, strings.Join(allowedCIDRs, ","), time.Now().Unix())
+		`INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)`,
+		username, passwordHash, time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
-	if err := s.ReplaceUserClients(ctx, id, allowedClientIDs); err != nil {
-		return id, err
-	}
-	return id, nil
-}
-
-func (s *Store) ReplaceUserClients(ctx context.Context, userID int64, clientIDs []int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM user_clients WHERE user_id = ?`, userID); err != nil {
-		return err
-	}
-	seen := map[int64]bool{}
-	for _, cid := range clientIDs {
-		if cid <= 0 || seen[cid] {
-			continue
-		}
-		seen[cid] = true
-		if _, err := tx.ExecContext(ctx, `INSERT INTO user_clients (user_id, client_id) VALUES (?, ?)`, userID, cid); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return res.LastInsertId()
 }
 
 func (s *Store) UserByUsername(ctx context.Context, username string) (*User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, username, password_hash, allowed_source_cidrs, created_at FROM users WHERE username = ?`, username)
-	u, err := scanUser(row)
-	if err != nil || u == nil {
-		return u, err
-	}
-	if err := s.loadUserClientIDs(ctx, u); err != nil {
-		return nil, err
-	}
-	return u, nil
+	row := s.db.QueryRowContext(ctx, `SELECT id, username, password_hash, created_at FROM users WHERE username = ?`, username)
+	return scanUser(row)
 }
 
 func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, username, password_hash, allowed_source_cidrs, created_at FROM users WHERE id = ?`, id)
-	u, err := scanUser(row)
-	if err != nil || u == nil {
-		return u, err
-	}
-	if err := s.loadUserClientIDs(ctx, u); err != nil {
-		return nil, err
-	}
-	return u, nil
-}
-
-func (s *Store) loadUserClientIDs(ctx context.Context, u *User) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT client_id FROM user_clients WHERE user_id = ? ORDER BY client_id`, u.ID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		ids = append(ids, id)
-	}
-	u.AllowedClientIDs = ids
-	return rows.Err()
+	row := s.db.QueryRowContext(ctx, `SELECT id, username, password_hash, created_at FROM users WHERE id = ?`, id)
+	return scanUser(row)
 }
 
 type rowScanner interface {
@@ -513,67 +457,37 @@ type rowScanner interface {
 
 func scanUser(row rowScanner) (*User, error) {
 	var u User
-	var cidrs string
 	var created int64
-	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &cidrs, &created); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
-	}
-	if cidrs != "" {
-		u.AllowedSourceCIDRs = strings.Split(cidrs, ",")
 	}
 	u.CreatedAt = time.Unix(created, 0)
 	return &u, nil
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, username, password_hash, allowed_source_cidrs, created_at FROM users ORDER BY id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, username, password_hash, created_at FROM users ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []User
-	idx := map[int64]int{}
 	for rows.Next() {
 		var u User
-		var cidrs string
 		var created int64
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &cidrs, &created); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &created); err != nil {
 			return nil, err
-		}
-		if cidrs != "" {
-			u.AllowedSourceCIDRs = strings.Split(cidrs, ",")
 		}
 		u.CreatedAt = time.Unix(created, 0)
-		idx[u.ID] = len(out)
 		out = append(out, u)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return out, nil
-	}
-	assocRows, err := s.db.QueryContext(ctx, `SELECT user_id, client_id FROM user_clients ORDER BY client_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer assocRows.Close()
-	for assocRows.Next() {
-		var uid, cid int64
-		if err := assocRows.Scan(&uid, &cid); err != nil {
-			return nil, err
-		}
-		if i, ok := idx[uid]; ok {
-			out[i].AllowedClientIDs = append(out[i].AllowedClientIDs, cid)
-		}
-	}
-	return out, assocRows.Err()
+	return out, rows.Err()
 }
 
-func (s *Store) UpdateUser(ctx context.Context, id int64, newUsername, newPasswordHash string, newAllowedCIDRs []string, replaceCIDRs bool, newAllowedClientIDs []int64, replaceClientIDs bool) error {
+func (s *Store) UpdateUser(ctx context.Context, id int64, newUsername, newPasswordHash string) error {
 	sets := []string{}
 	args := []any{}
 	if newUsername != "" {
@@ -584,23 +498,13 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, newUsername, newPasswo
 		sets = append(sets, "password_hash = ?")
 		args = append(args, newPasswordHash)
 	}
-	if replaceCIDRs {
-		sets = append(sets, "allowed_source_cidrs = ?")
-		args = append(args, strings.Join(newAllowedCIDRs, ","))
+	if len(sets) == 0 {
+		return nil
 	}
-	if len(sets) > 0 {
-		args = append(args, id)
-		q := `UPDATE users SET ` + strings.Join(sets, ", ") + ` WHERE id = ?`
-		if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
-			return err
-		}
-	}
-	if replaceClientIDs {
-		if err := s.ReplaceUserClients(ctx, id, newAllowedClientIDs); err != nil {
-			return err
-		}
-	}
-	return nil
+	args = append(args, id)
+	q := `UPDATE users SET ` + strings.Join(sets, ", ") + ` WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, q, args...)
+	return err
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
@@ -717,7 +621,6 @@ func (s *Store) PurgeOldData(ctx context.Context, cutoff time.Time) (int64, erro
 	}{
 		{`DELETE FROM metric_samples WHERE bucket_ts < ?`, ts},
 		{`DELETE FROM auth_failures  WHERE ts        < ?`, ts},
-		{`DELETE FROM ip_bans        WHERE banned_until < ?`, now},
 		{`DELETE FROM admin_sessions WHERE expires_at   < ?`, now},
 		{`DELETE FROM token_sessions WHERE expires_at   < ?`, now},
 	} {
@@ -733,19 +636,18 @@ func (s *Store) PurgeOldData(ctx context.Context, cutoff time.Time) (int64, erro
 }
 
 type ProxyEvent struct {
-	ID         int64
-	TS         time.Time
-	UserID     int64
-	Username   string
-	ClientID   int64
-	ClientName string
-	TargetHost string
-	SourceIP   string
-	Protocol   string
-	Outcome    string
-	BytesIn    int64
-	BytesOut   int64
-	DurationMS int64
+	ID          int64
+	TS          time.Time
+	UserID      int64
+	Username    string
+	ClientID    int64
+	ClientName  string
+	TargetHost  string
+	Protocol    string
+	Outcome     string
+	BytesIn     int64
+	BytesOut    int64
+	DurationMS  int64
 }
 
 func (s *Store) InsertProxyEvent(ctx context.Context, ev ProxyEvent) (int64, error) {
@@ -764,9 +666,9 @@ func (s *Store) InsertProxyEvent(ctx context.Context, ev ProxyEvent) (int64, err
 		ts = time.Now()
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO proxy_events (ts, user_id, client_id, target_host, source_ip, protocol, outcome, bytes_in, bytes_out, duration_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ts.Unix(), userPtr, clientPtr, ev.TargetHost, ev.SourceIP, ev.Protocol, ev.Outcome, ev.BytesIn, ev.BytesOut, ev.DurationMS)
+		`INSERT INTO proxy_events (ts, user_id, client_id, target_host, protocol, outcome, bytes_in, bytes_out, duration_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ts.Unix(), userPtr, clientPtr, ev.TargetHost, ev.Protocol, ev.Outcome, ev.BytesIn, ev.BytesOut, ev.DurationMS)
 	if err != nil {
 		return 0, err
 	}
@@ -834,7 +736,7 @@ func (s *Store) ListProxyEventsFiltered(ctx context.Context, f ProxyEventFilter,
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT e.id, e.ts, COALESCE(e.user_id,0), COALESCE(u.username,''),
                 COALESCE(e.client_id,0), COALESCE(c.name,''),
-                e.target_host, e.source_ip, e.protocol, e.outcome,
+                e.target_host, e.protocol, e.outcome,
                 e.bytes_in, e.bytes_out, e.duration_ms
          FROM proxy_events e
          LEFT JOIN users   u ON u.id = e.user_id
@@ -852,7 +754,7 @@ func (s *Store) ListProxyEventsFiltered(ctx context.Context, f ProxyEventFilter,
 		var p ProxyEvent
 		var ts int64
 		if err := rows.Scan(&p.ID, &ts, &p.UserID, &p.Username, &p.ClientID, &p.ClientName,
-			&p.TargetHost, &p.SourceIP, &p.Protocol, &p.Outcome,
+			&p.TargetHost, &p.Protocol, &p.Outcome,
 			&p.BytesIn, &p.BytesOut, &p.DurationMS); err != nil {
 			return nil, err
 		}
@@ -869,163 +771,6 @@ func (s *Store) PurgeProxyEventsOlderThan(ctx context.Context, cutoff time.Time)
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
-}
-
-func (s *Store) RecordAuthFailure(ctx context.Context, sourceIP, username, protocol string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO auth_failures (ts, source_ip, username_attempted, protocol) VALUES (?, ?, ?, ?)`,
-		time.Now().Unix(), sourceIP, username, protocol)
-	return err
-}
-
-func (s *Store) CountAuthFailuresSince(ctx context.Context, sourceIP string, since time.Time) (int, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM auth_failures WHERE source_ip = ? AND ts >= ?`, sourceIP, since.Unix()).Scan(&n)
-	return n, err
-}
-
-type Ban struct {
-	SourceIP     string
-	BannedUntil  time.Time
-	Reason       string
-	FailureCount int
-}
-
-func (s *Store) UpsertBan(ctx context.Context, sourceIP string, until time.Time, reason string, failures int) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO ip_bans (source_ip, banned_until, reason, failure_count) VALUES (?, ?, ?, ?)
-         ON CONFLICT(source_ip) DO UPDATE SET banned_until = excluded.banned_until, reason = excluded.reason, failure_count = excluded.failure_count`,
-		sourceIP, until.Unix(), reason, failures)
-	return err
-}
-
-func (s *Store) ActiveBan(ctx context.Context, sourceIP string) (*Ban, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT source_ip, banned_until, reason, failure_count FROM ip_bans WHERE source_ip = ? AND banned_until > ?`,
-		sourceIP, time.Now().Unix())
-	var b Ban
-	var until int64
-	if err := row.Scan(&b.SourceIP, &until, &b.Reason, &b.FailureCount); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	b.BannedUntil = time.Unix(until, 0)
-	return &b, nil
-}
-
-func (s *Store) ListBans(ctx context.Context, activeOnly bool) ([]Ban, error) {
-	q := `SELECT source_ip, banned_until, reason, failure_count FROM ip_bans`
-	args := []any{}
-	if activeOnly {
-		q += ` WHERE banned_until > ?`
-		args = append(args, time.Now().Unix())
-	}
-	q += ` ORDER BY banned_until DESC`
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Ban
-	for rows.Next() {
-		var b Ban
-		var until int64
-		if err := rows.Scan(&b.SourceIP, &until, &b.Reason, &b.FailureCount); err != nil {
-			return nil, err
-		}
-		b.BannedUntil = time.Unix(until, 0)
-		out = append(out, b)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) UnbanIP(ctx context.Context, sourceIP string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM ip_bans WHERE source_ip = ?`, sourceIP)
-	return err
-}
-
-type OriginStat struct {
-	Origin   string
-	Total    int
-	Blocked  int
-	LastSeen time.Time
-}
-
-func (s *Store) OriginStats(ctx context.Context, since time.Time, limit int) ([]OriginStat, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT source_ip,
-		        COUNT(*) AS total,
-		        SUM(CASE WHEN outcome = 'denied' THEN 1 ELSE 0 END) AS blocked,
-		        MAX(ts) AS last_ts
-		 FROM proxy_events
-		 WHERE ts >= ? AND source_ip <> ''
-		 GROUP BY source_ip
-		 ORDER BY total DESC
-		 LIMIT ?`, since.Unix(), limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []OriginStat
-	for rows.Next() {
-		var st OriginStat
-		var last int64
-		if err := rows.Scan(&st.Origin, &st.Total, &st.Blocked, &last); err != nil {
-			return nil, err
-		}
-		st.LastSeen = time.Unix(last, 0)
-		out = append(out, st)
-	}
-	return out, rows.Err()
-}
-
-type AllowedIP struct {
-	IP        string
-	Reason    string
-	CreatedAt time.Time
-}
-
-func (s *Store) AddAllowedIP(ctx context.Context, ip, reason string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO ip_allowlist (ip, reason, created_at) VALUES (?, ?, ?)
-		 ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason`,
-		ip, reason, time.Now().Unix())
-	return err
-}
-
-func (s *Store) RemoveAllowedIP(ctx context.Context, ip string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM ip_allowlist WHERE ip = ?`, ip)
-	return err
-}
-
-func (s *Store) ListAllowedIPs(ctx context.Context) ([]AllowedIP, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ip, reason, created_at FROM ip_allowlist ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []AllowedIP
-	for rows.Next() {
-		var a AllowedIP
-		var ts int64
-		if err := rows.Scan(&a.IP, &a.Reason, &ts); err != nil {
-			return nil, err
-		}
-		a.CreatedAt = time.Unix(ts, 0)
-		out = append(out, a)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) IsIPAllowed(ctx context.Context, ip string) (bool, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ip_allowlist WHERE ip = ?`, ip).Scan(&count)
-	return count > 0, err
 }
 
 func placeholders(n int) string {

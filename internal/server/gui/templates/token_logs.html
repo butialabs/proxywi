@@ -30,12 +30,12 @@
         <tr class="border-b border-border hover:bg-accent/5">
           <td class="px-3 py-2 text-dim text-xs font-mono">{{.TSHuman}}</td>
           <td class="px-3 py-2">
-            {{if eq .Outcome "ok"}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-accent/15 text-accent"><i class="bi bi-check-circle mr-1"></i>ok</span>
-            {{else if eq .Outcome "denied"}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-amber/15 text-amber"><i class="bi bi-slash-circle mr-1"></i>denied</span>
-            {{else}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-danger/15 text-danger"><i class="bi bi-x-circle mr-1"></i>{{.Outcome}}</span>{{end}}
+            {{if eq .Outcome "ok"}}<span title="Ok" class="inline-flex items-center gap-1 text-accent"><i class="bi bi-check-circle mr-1"></i></span>
+            {{else if eq .Outcome "denied"}}<span title="Denied" class="inline-flex items-center gap-1 text-amber"><i class="bi bi-slash-circle mr-1"></i></span>
+            {{else}}<span title="{{.Outcome}}" class="inline-flex items-center gap-1 text-danger"><i class="bi bi-x-circle mr-1"></i></span>{{end}}
           </td>
-          <td class="px-3 py-2"><span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim">{{.Protocol}}</span></td>
-          <td class="px-3 py-2 truncate" style="max-width:360px;"><code class="font-mono text-accent-hi bg-accent/10 border border-accent/15 px-1.5 py-0.5">{{.Target}}</code></td>
+          <td class="px-3 py-2"><span class="inline-flex items-center gap-1 text-dim">{{.Protocol}}</span></td>
+          <td class="px-3 py-2 truncate max-w-[360px]"><code class="font-mono text-accent-hi">{{.Target}}</code></td>
           <td class="px-3 py-2 text-right font-mono">{{.BytesInH}}</td>
           <td class="px-3 py-2 text-right font-mono">{{.BytesOutH}}</td>
           <td class="px-3 py-2 text-right font-mono text-dim">{{.DurationMS}} ms</td>

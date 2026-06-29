@@ -1,12 +1,6 @@
 {{define "content"}}
 <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
   <h3 class="text-xl font-semibold">{{t "logs.title"}}</h3>
-  <div class="flex items-center gap-2">
-    <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim" id="logs-status">
-      <span class="inline-block w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin"></span>
-      <span id="logs-status-text">{{t "logs.connecting"}}</span>
-    </span>
-  </div>
 </div>
 
 <div class="bg-panel border border-border">
@@ -27,7 +21,7 @@
         {{end}}
       </select>
       <input type="search" name="q" class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-auto" value="{{.FilterSearch}}" placeholder="{{t "logs.filter_search"}}">
-      <button class="inline-flex items-center gap-1 bg-accent text-bg px-2.5 py-1 text-sm font-medium hover:bg-accent-hi" type="submit"><i class="bi bi-funnel"></i></button>
+      <button class="inline-flex items-center gap-1 bg-accent text-bg px-2.5 py-2 text-sm font-medium hover:bg-accent-hi" type="submit"><i class="bi bi-funnel"></i></button>
       {{if .HasFilter}}<a class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" href="/logs"><i class="bi bi-x-lg"></i></a>{{end}}
     </form>
   </div>
@@ -51,14 +45,14 @@
         <tr data-id="{{.ID}}" class="border-b border-border hover:bg-accent/5">
           <td class="px-3 py-2 text-dim text-xs font-mono">{{.TSHuman}}</td>
           <td class="px-3 py-2">
-            {{if eq .Outcome "ok"}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-accent/15 text-accent"><i class="bi bi-check-circle mr-1"></i>ok</span>
-            {{else if eq .Outcome "denied"}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-amber/15 text-amber"><i class="bi bi-slash-circle mr-1"></i>denied</span>
-            {{else}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-danger/15 text-danger"><i class="bi bi-x-circle mr-1"></i>{{.Outcome}}</span>{{end}}
+            {{if eq .Outcome "ok"}}<span title="Ok" class="inline-flex items-center gap-1 text-accent"><i class="bi bi-check-circle mr-1"></i></span>
+            {{else if eq .Outcome "denied"}}<span  title="Denied" class="inline-flex items-center gap-1 text-amber"><i class="bi bi-slash-circle mr-1"></i></span>
+            {{else}}<span title="{{.Outcome}}" class="inline-flex items-center gap-1 text-danger"><i class="bi bi-x-circle mr-1"></i></span>{{end}}
           </td>
-          <td class="px-3 py-2"><span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim">{{.Protocol}}</span></td>
+          <td class="px-3 py-2"><span class="inline-flex items-center gap-1 text-dim">{{.Protocol}}</span></td>
           <td class="px-3 py-2">{{.User}}</td>
           <td class="px-3 py-2">{{.ClientName}}</td>
-          <td class="px-3 py-2 truncate" style="max-width:320px;"><code class="font-mono text-accent-hi bg-accent/10 border border-accent/15 px-1.5 py-0.5">{{.Target}}</code></td>
+          <td class="px-3 py-2 truncate max-w-[320px]">{{if .Target}}<code class="font-mono text-accent-hi">{{.Target}}</code>{{end}}</td>
           <td class="px-3 py-2 text-right font-mono">{{.BytesInH}}</td>
           <td class="px-3 py-2 text-right font-mono">{{.BytesOutH}}</td>
           <td class="px-3 py-2 text-right font-mono text-dim">{{.DurationMS}} ms</td>
@@ -89,7 +83,5 @@
   </div>
   {{end}}
 </div>
-
-<script id="logs-data" type="application/json">{{json .LogsData}}</script>
 {{end}}
 {{template "layout" .}}

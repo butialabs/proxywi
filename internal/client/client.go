@@ -28,6 +28,7 @@ type Agent struct {
 	TLSInsecure    bool
 	AllowedTargets []string
 	DeniedTargets  []string
+	AgentVersion   string
 	Log            *slog.Logger
 
 	aclOnce sync.Once
@@ -58,8 +59,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	defer ws.CloseNow()
 
 	if err := ws.Write(dialCtx, websocket.MessageText, mustJSON(tunnel.Handshake{
-		Version: tunnel.ProtocolVersion,
-		Token:   a.Token,
+		Version:      tunnel.ProtocolVersion,
+		Token:        a.Token,
+		AgentVersion: a.AgentVersion,
 	})); err != nil {
 		return fmt.Errorf("write handshake: %w", err)
 	}

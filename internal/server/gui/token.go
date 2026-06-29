@@ -97,13 +97,13 @@ func (g *GUI) getTokenLogs(w http.ResponseWriter, r *http.Request) {
 		clientName = client.Name
 	}
 
-	since := time.Now().Add(-30 * 24 * time.Hour)
+	since := time.Now().Add(-24 * time.Hour)
 	events, _ := g.Store.ListProxyEventsFiltered(ctx, storage.ProxyEventFilter{ClientID: clientID, Since: since}, 200, 0)
 	views := make([]tokenLogView, 0, len(events))
 	for _, e := range events {
 		views = append(views, tokenLogView{
 			TSHuman:    e.TS.Format("Jan 02 15:04:05"),
-			Target:     e.TargetHost,
+			Target:     anonymizeTarget(e.TargetHost),
 			Protocol:   e.Protocol,
 			Outcome:    e.Outcome,
 			BytesInH:   humanBytes(e.BytesIn),

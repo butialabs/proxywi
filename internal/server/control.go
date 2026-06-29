@@ -101,15 +101,16 @@ func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 	defer session.Close()
 
 	agent := &Agent{
-		ID:        clientID,
-		Name:      dbClient.Name,
-		ConnectAt: time.Now(),
-		session:   session,
+		ID:           clientID,
+		Name:         dbClient.Name,
+		AgentVersion: hs.AgentVersion,
+		ConnectAt:    time.Now(),
+		session:      session,
 	}
 	c.Registry.Add(agent)
 	defer c.Registry.Remove(clientID, agent)
 
-	if err := c.Store.MarkClientSeen(ctx, clientID); err != nil {
+	if err := c.Store.MarkClientSeen(ctx, clientID, hs.AgentVersion); err != nil {
 		c.Log.Warn("mark client seen", "err", err)
 	}
 
@@ -143,7 +144,7 @@ func (c *Control) readMetaStream(ctx context.Context, agent *Agent) {
 	defer ticker.Stop()
 	go func() {
 		for range ticker.C {
-			_ = c.Store.MarkClientSeen(ctx, agent.ID)
+			_ = c.Store.MarkClientSeen(ctx, agent.ID, agent.AgentVersion)
 		}
 	}()
 

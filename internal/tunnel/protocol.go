@@ -11,9 +11,10 @@ import (
 const ProtocolVersion = 1
 
 type Handshake struct {
-	Version int    `json:"version"`
-	Token   string `json:"token"`
-	Name    string `json:"name"`
+	Version      int    `json:"version"`
+	Token        string `json:"token"`
+	Name         string `json:"name"`
+	AgentVersion string `json:"agent_version,omitempty"`
 }
 
 type HandshakeAck struct {

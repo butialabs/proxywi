@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/butialabs/proxywi/internal/i18n"
-	"github.com/butialabs/proxywi/internal/server"
 	"github.com/butialabs/proxywi/internal/storage"
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -50,77 +48,6 @@ func (g *GUI) adminName(ctx context.Context) string {
 	var u string
 	_ = row.Scan(&u)
 	return u
-}
-
-func (g *GUI) getSetup(w http.ResponseWriter, r *http.Request) {
-	if n, _ := g.Store.CountAdmins(r.Context()); n > 0 {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-	g.render(w, r, "setup.html", map[string]any{"Title": "Setup"})
-}
-
-func (g *GUI) postSetup(w http.ResponseWriter, r *http.Request) {
-	v := g.view(r)
-	if n, _ := g.Store.CountAdmins(r.Context()); n > 0 {
-		g.renderFlash(w, r, "login.html", v.tr("setup.already_configured"), "warning", "Setup")
-		return
-	}
-	_ = r.ParseForm()
-	username := strings.TrimSpace(r.Form.Get("username"))
-	email := strings.TrimSpace(r.Form.Get("email"))
-	password := r.Form.Get("password")
-	confirm := r.Form.Get("password_confirm")
-
-	form := map[string]any{
-		"Title":        "Setup",
-		"FormUsername": username,
-		"FormEmail":    email,
-	}
-	if username == "" || email == "" {
-		form["Flash"] = v.tr("setup.title")
-		form["FlashKind"] = "danger"
-		g.render(w, r, "setup.html", form)
-		return
-	}
-	if len(password) < 8 {
-		form["Flash"] = v.tr("setup.password_too_short")
-		form["FlashKind"] = "danger"
-		g.render(w, r, "setup.html", form)
-		return
-	}
-	if password != confirm {
-		form["Flash"] = v.tr("setup.password_mismatch")
-		form["FlashKind"] = "danger"
-		g.render(w, r, "setup.html", form)
-		return
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, "hash error", http.StatusInternalServerError)
-		return
-	}
-	if err := g.Store.CreateFirstAdmin(r.Context(), username, email, string(hash)); err != nil {
-		if errors.Is(err, storage.ErrAlreadyConfigured) {
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
-		}
-		g.Log.Error("create first admin", "err", err)
-		http.Error(w, "could not create admin", http.StatusInternalServerError)
-		return
-	}
-	admin, _ := g.Store.AdminByUsername(r.Context(), username)
-	if admin == nil {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-	sid, err := g.Store.CreateSession(r.Context(), admin.ID, 24*time.Hour)
-	if err != nil {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-	g.setSession(w, sid)
-	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (g *GUI) getLogin(w http.ResponseWriter, r *http.Request) {
@@ -200,40 +127,12 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 		periodKey = "1h"
 	}
 	p := periodDefs[periodKey]
-	filterClientID, _ := strconv.ParseInt(q.Get("client_id"), 10, 64)
-	filterUserID, _ := strconv.ParseInt(q.Get("user_id"), 10, 64)
 
 	allClients, _ := g.Store.ListClients(ctx)
 
-	var effIDs []int64
-	scoped := false
-	if filterUserID > 0 {
-		if u, _ := g.Store.UserByID(ctx, filterUserID); u != nil && len(u.AllowedClientIDs) > 0 {
-			effIDs = u.AllowedClientIDs
-			scoped = true
-		}
-	}
-	if filterClientID > 0 {
-		if scoped && !containsID(effIDs, filterClientID) {
-			effIDs = []int64{} // client not in access scope -> show nothing
-		} else {
-			effIDs = []int64{filterClientID}
-		}
-		scoped = true
-	}
-
 	since := time.Now().Add(-p.duration)
-	var samples []storage.MetricPoint
-	if !(scoped && len(effIDs) == 0) {
-		mf := storage.MetricsFilter{Since: since, BucketSeconds: int64(p.bucket.Seconds())}
-		switch {
-		case len(effIDs) == 1:
-			mf.ClientID = effIDs[0]
-		case len(effIDs) > 1:
-			mf.ClientIDs = effIDs
-		}
-		samples, _ = g.Store.Metrics(ctx, mf)
-	}
+	mf := storage.MetricsFilter{Since: since, BucketSeconds: int64(p.bucket.Seconds())}
+	samples, _ := g.Store.Metrics(ctx, mf)
 
 	buckets := make(map[int64][2]int64, len(samples))
 	for _, s := range samples {
@@ -253,75 +152,35 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	onlineAgents := g.Registry.Online()
-	if scoped {
-		set := make(map[int64]bool, len(effIDs))
-		for _, id := range effIDs {
-			set[id] = true
-		}
-		filtered := onlineAgents[:0]
-		for _, a := range onlineAgents {
-			if set[a.ID] {
-				filtered = append(filtered, a)
-			}
-		}
-		onlineAgents = filtered
-	}
-
 	var totalIn, totalOut int64
-	onlineSeed := make([]map[string]any, 0, len(onlineAgents))
-	for _, a := range onlineAgents {
-		onlineSeed = append(onlineSeed, map[string]any{"id": a.ID})
-	}
 	for _, s := range samples {
 		totalIn += s.BytesIn
 		totalOut += s.BytesOut
 	}
 
-	opts := make([]clientOption, 0, len(allClients))
-	for _, c := range allClients {
-		opts = append(opts, clientOption{ID: c.ID, Name: c.Name})
-	}
-	users, _ := g.Store.ListUsers(ctx)
-	accessOpts := make([]clientOption, 0, len(users))
-	for _, u := range users {
-		accessOpts = append(accessOpts, clientOption{ID: u.ID, Name: u.Username})
-	}
 	pos := make([]periodOption, 0, len(periodOrder))
 	for _, k := range periodOrder {
 		pos = append(pos, periodOption{Value: k, Label: v.tr(periodDefs[k].labelKey)})
 	}
 
-	totalClients := len(allClients)
-	if scoped {
-		totalClients = len(effIDs)
-	}
-
 	g.render(w, r, "dashboard.html", map[string]any{
-		"Title":          "Dashboard",
-		"Active":         "dashboard",
-		"User":           g.adminName(ctx),
-		"OnlineCount":    len(onlineAgents),
-		"TotalClients":   totalClients,
-		"BytesInHuman":   humanBytes(totalIn),
-		"BytesOutHuman":  humanBytes(totalOut),
-		"ClientOptions":  opts,
-		"AccessOptions":  accessOpts,
-		"PeriodOptions":  pos,
-		"FilterClientID": filterClientID,
-		"FilterUserID":   filterUserID,
-		"FilterPeriod":   periodKey,
-		"PeriodHuman":    v.tr(p.labelKey),
+		"Title":         "Dashboard",
+		"Active":        "dashboard",
+		"User":          g.adminName(ctx),
+		"OnlineCount":   len(onlineAgents),
+		"TotalClients":  len(allClients),
+		"BytesInHuman":  humanBytes(totalIn),
+		"BytesOutHuman": humanBytes(totalOut),
+		"PeriodOptions": pos,
+		"FilterPeriod":  periodKey,
+		"PeriodHuman":   v.tr(p.labelKey),
 		"DashboardData": map[string]any{
-			"labels":      labels,
-			"dataIn":      in,
-			"dataOut":     out,
-			"onlineCount": len(onlineAgents),
-			"online":      onlineSeed,
+			"labels":  labels,
+			"dataIn":  in,
+			"dataOut": out,
 			"tr": map[string]string{
-				"in":           v.tr("dashboard.chart_in"),
-				"out":          v.tr("dashboard.chart_out"),
-				"connected":    v.tr("logs.live_connected"),
-				"disconnected": v.tr("logs.live_disconnected"),
+				"in":  v.tr("dashboard.chart_in"),
+				"out": v.tr("dashboard.chart_out"),
 			},
 		},
 	})
@@ -330,6 +189,7 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 type clientView struct {
 	ID            int64
 	Name          string
+	AgentVersion  string
 	Online        bool
 	LastSeenHuman string
 }
@@ -346,6 +206,7 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 		views = append(views, clientView{
 			ID:            c.ID,
 			Name:          c.Name,
+			AgentVersion:  c.AgentVersion,
 			Online:        online,
 			LastSeenHuman: humanSince(c.LastSeen),
 		})
@@ -469,62 +330,30 @@ func (g *GUI) postDeleteClient(w http.ResponseWriter, r *http.Request) {
 }
 
 type accessView struct {
-	ID                 int64
-	Username           string
-	AllowedSourceCIDRs []string
-	CIDRsCSV           string
-	LastUsedHuman      string
-	UsedCount          int
-	AllClients         bool
-	AllowedClientIDs   []int64
-	ClientIDsCSV       string
-	AllowedClientNames []string
+	ID            int64
+	Username      string
+	LastUsedHuman string
+	UsedCount     int
 }
 
 func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	list, _ := g.Store.ListUsers(ctx)
-	clients, _ := g.Store.ListClients(ctx)
 	usage, _ := g.Store.UserUsageStats(ctx)
-
-	clientByID := make(map[int64]string, len(clients))
-	for _, c := range clients {
-		clientByID[c.ID] = c.Name
-	}
 
 	views := make([]accessView, 0, len(list))
 	for _, u := range list {
-		ids := u.AllowedClientIDs
-		idStrs := make([]string, 0, len(ids))
-		names := make([]string, 0, len(ids))
-		for _, id := range ids {
-			idStrs = append(idStrs, strconv.FormatInt(id, 10))
-			if n, ok := clientByID[id]; ok {
-				names = append(names, n)
-			}
-		}
 		uu := usage[u.ID]
 		lastUsed := "—"
 		if uu.Count > 0 {
 			lastUsed = humanSince(uu.LastUsed)
 		}
 		views = append(views, accessView{
-			ID:                 u.ID,
-			Username:           u.Username,
-			AllowedSourceCIDRs: u.AllowedSourceCIDRs,
-			CIDRsCSV:           strings.Join(u.AllowedSourceCIDRs, ","),
-			LastUsedHuman:      lastUsed,
-			UsedCount:          uu.Count,
-			AllClients:         len(ids) == 0,
-			AllowedClientIDs:   ids,
-			ClientIDsCSV:       strings.Join(idStrs, ","),
-			AllowedClientNames: names,
+			ID:            u.ID,
+			Username:      u.Username,
+			LastUsedHuman: lastUsed,
+			UsedCount:     uu.Count,
 		})
-	}
-
-	clientOpts := make([]clientOption, 0, len(clients))
-	for _, c := range clients {
-		clientOpts = append(clientOpts, clientOption{ID: c.ID, Name: c.Name})
 	}
 
 	proxyHost := g.Cfg.MainDomain
@@ -533,12 +362,11 @@ func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	g.render(w, r, "access.html", map[string]any{
-		"Title":         "Proxy Access",
-		"Active":        "access",
-		"User":          g.adminName(ctx),
-		"Accesses":      views,
-		"ClientOptions": clientOpts,
-		"ProxyHost":     proxyHost,
+		"Title":     "Proxy Access",
+		"Active":    "access",
+		"User":      g.adminName(ctx),
+		"Accesses":  views,
+		"ProxyHost": proxyHost,
 	})
 }
 
@@ -555,9 +383,7 @@ func (g *GUI) postNewAccess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hash error", http.StatusInternalServerError)
 		return
 	}
-	cidrs := splitCSV(r.Form.Get("cidrs"))
-	clientIDs := parseClientIDs(r.Form["client_ids"])
-	if _, err := g.Store.CreateUser(r.Context(), username, string(hash), cidrs, clientIDs); err != nil {
+	if _, err := g.Store.CreateUser(r.Context(), username, string(hash)); err != nil {
 		g.Log.Error("create user", "err", err)
 		http.Error(w, "could not create user", http.StatusInternalServerError)
 		return
@@ -574,8 +400,6 @@ func (g *GUI) postEditAccess(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	username := strings.TrimSpace(r.Form.Get("username"))
 	password := r.Form.Get("password")
-	cidrs := splitCSV(r.Form.Get("cidrs"))
-	clientIDs := parseClientIDs(r.Form["client_ids"])
 
 	var newHash string
 	if password != "" {
@@ -586,30 +410,12 @@ func (g *GUI) postEditAccess(w http.ResponseWriter, r *http.Request) {
 		}
 		newHash = string(hash)
 	}
-	if err := g.Store.UpdateUser(r.Context(), id, username, newHash, cidrs, true, clientIDs, true); err != nil {
+	if err := g.Store.UpdateUser(r.Context(), id, username, newHash); err != nil {
 		g.Log.Error("update user", "err", err)
 		http.Error(w, "could not update user", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/access", http.StatusFound)
-}
-
-func parseClientIDs(raw []string) []int64 {
-	out := make([]int64, 0, len(raw))
-	seen := map[int64]bool{}
-	for _, s := range raw {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		id, err := strconv.ParseInt(s, 10, 64)
-		if err != nil || id <= 0 || seen[id] {
-			continue
-		}
-		seen[id] = true
-		out = append(out, id)
-	}
-	return out
 }
 
 func (g *GUI) postDeleteAccess(w http.ResponseWriter, r *http.Request) {
@@ -636,6 +442,53 @@ type logView struct {
 }
 
 const logsPageSize = 20
+
+func anonymizeTarget(target string) string {
+	if target == "" {
+		return ""
+	}
+	host, port, hasPort := splitTargetHostPort(target)
+	if strings.HasPrefix(host, "[") {
+		out := "[****]"
+		if hasPort {
+			out += ":" + port
+		}
+		return out
+	}
+	labels := strings.Split(host, ".")
+	for i, l := range labels {
+		n := len(l)
+		switch {
+		case n <= 2:
+			labels[i] = strings.Repeat("*", n)
+		case n == 3:
+			labels[i] = "*" + l[n-2:]
+		default:
+			labels[i] = l[:3] + strings.Repeat("*", n-3)
+		}
+	}
+	out := strings.Join(labels, ".")
+	if hasPort {
+		out += ":" + port
+	}
+	return out
+}
+
+func splitTargetHostPort(target string) (host, port string, hasPort bool) {
+	if strings.HasPrefix(target, "[") {
+		if i := strings.LastIndex(target, "]:"); i > 0 {
+			return target[:i+1], target[i+2:], true
+		}
+		return target, "", false
+	}
+	if i := strings.LastIndex(target, ":"); i > 0 {
+		portStr := target[i+1:]
+		if _, err := strconv.Atoi(portStr); err == nil {
+			return target[:i], portStr, true
+		}
+	}
+	return target, "", false
+}
 
 func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -676,7 +529,7 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 			TSHuman:    e.TS.Format("15:04:05"),
 			User:       e.Username,
 			ClientName: e.ClientName,
-			Target:     e.TargetHost,
+			Target:     anonymizeTarget(e.TargetHost),
 			Protocol:   e.Protocol,
 			Outcome:    e.Outcome,
 			BytesInH:   humanBytes(e.BytesIn),
@@ -712,7 +565,6 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	hasFilter := filterUserID > 0 || filterClientID > 0 || search != ""
 
-	v := g.view(r)
 	g.render(w, r, "logs.html", map[string]any{
 		"Title":          "Logs",
 		"Active":         "logs",
@@ -732,122 +584,7 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 		"FilterSearch":   search,
 		"FilterQS":       template.HTML(filterQS),
 		"HasFilter":      hasFilter,
-		"LogsData": map[string]any{
-			"onFirstPage": page <= 1,
-			"pageSize":    logsPageSize,
-			"filtered":    hasFilter,
-			"tr": map[string]string{
-				"connected":    v.tr("logs.live_connected"),
-				"disconnected": v.tr("logs.live_disconnected"),
-			},
-		},
 	})
-}
-
-type banView struct {
-	Origin       string // full opaque origin key (form value)
-	Short        string // display prefix
-	Reason       string
-	FailureCount int
-	ExpiresHuman string
-}
-
-type originStatView struct {
-	Origin       string // full opaque origin key (form value)
-	Short        string // display prefix
-	Total        int
-	Blocked      int
-	LastSeenHuman string
-	Banned       bool
-}
-
-func (g *GUI) getSecurity(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	bans, _ := g.Store.ListBans(ctx, true)
-	banned := make(map[string]bool, len(bans))
-	views := make([]banView, 0, len(bans))
-	for _, b := range bans {
-		banned[b.SourceIP] = true
-		views = append(views, banView{
-			Origin:       b.SourceIP,
-			Short:        server.ShortOrigin(b.SourceIP),
-			Reason:       b.Reason,
-			FailureCount: b.FailureCount,
-			ExpiresHuman: humanUntil(b.BannedUntil),
-		})
-	}
-
-	stats, _ := g.Store.OriginStats(ctx, time.Now().Add(-24*time.Hour), 100)
-	origins := make([]originStatView, 0, len(stats))
-	for _, st := range stats {
-		origins = append(origins, originStatView{
-			Origin:        st.Origin,
-			Short:         server.ShortOrigin(st.Origin),
-			Total:         st.Total,
-			Blocked:       st.Blocked,
-			LastSeenHuman: humanSince(st.LastSeen),
-			Banned:        banned[st.Origin],
-		})
-	}
-
-	allowlist, _ := g.Store.ListAllowedIPs(ctx)
-	g.render(w, r, "security.html", map[string]any{
-		"Title":      "Security",
-		"Active":     "security",
-		"User":       g.adminName(ctx),
-		"Origins":    origins,
-		"ActiveBans": views,
-		"Allowlist":  allowlist,
-	})
-}
-
-func (g *GUI) postAddAllowedIP(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	ip := strings.TrimSpace(r.Form.Get("ip"))
-	reason := strings.TrimSpace(r.Form.Get("reason"))
-	if ip == "" {
-		http.Error(w, "ip required", http.StatusBadRequest)
-		return
-	}
-	_ = g.Store.AddAllowedIP(r.Context(), ip, reason)
-	http.Redirect(w, r, "/security", http.StatusFound)
-}
-
-func (g *GUI) postRemoveAllowedIP(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	ip := strings.TrimSpace(r.Form.Get("ip"))
-	if ip != "" {
-		_ = g.Store.RemoveAllowedIP(r.Context(), ip)
-	}
-	http.Redirect(w, r, "/security", http.StatusFound)
-}
-
-func (g *GUI) postBan(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	origin := strings.TrimSpace(r.Form.Get("origin"))
-	hours, _ := strconv.Atoi(r.Form.Get("hours"))
-	if hours <= 0 {
-		hours = 24
-	}
-	reason := r.Form.Get("reason")
-	if reason == "" {
-		reason = "manual"
-	}
-	if origin == "" {
-		http.Error(w, "origin required", http.StatusBadRequest)
-		return
-	}
-	_ = g.Store.UpsertBan(r.Context(), origin, time.Now().Add(time.Duration(hours)*time.Hour), reason, 0)
-	http.Redirect(w, r, "/security", http.StatusFound)
-}
-
-func (g *GUI) postUnban(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	origin := strings.TrimSpace(r.Form.Get("origin"))
-	if origin != "" {
-		_ = g.Store.UnbanIP(r.Context(), origin)
-	}
-	http.Redirect(w, r, "/security", http.StatusFound)
 }
 
 func (g *GUI) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
@@ -875,25 +612,6 @@ func randHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
-}
-
-func containsID(ids []int64, want int64) bool {
-	for _, id := range ids {
-		if id == want {
-			return true
-		}
-	}
-	return false
-}
-
-func splitCSV(s string) []string {
-	var out []string
-	for _, p := range strings.Split(s, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 func humanBytes(n int64) string {

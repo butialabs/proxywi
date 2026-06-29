@@ -42,7 +42,6 @@ module.exports = function (grunt) {
       },
       dist: {
         src: [
-          'node_modules/alpinejs/dist/cdn.min.js',
           'node_modules/chart.js/dist/chart.umd.js',
           'source/js/*.js'
         ],

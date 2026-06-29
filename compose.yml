@@ -6,6 +6,8 @@ services:
     environment:
       PROXYWI_DOMAIN: "proxy.example.com"
       ACME_EMAIL: "email@example.com"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "change-me"
     volumes:
       - ./proxywi/data:/data
     ports:

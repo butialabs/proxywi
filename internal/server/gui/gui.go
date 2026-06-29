@@ -3,8 +3,10 @@ package gui
 import (
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/butialabs/proxywi/internal/config"
 	"github.com/butialabs/proxywi/internal/server"
@@ -19,6 +21,7 @@ type GUI struct {
 	Hub      *server.Hub
 	Cfg      config.Server
 	Log      *slog.Logger
+	Limiter  *server.RateLimiter
 
 	tpl *templates
 }
@@ -28,7 +31,7 @@ func New(store *storage.Store, reg *server.Registry, hub *server.Hub, cfg config
 	if err != nil {
 		return nil, err
 	}
-	return &GUI{Store: store, Registry: reg, Hub: hub, Cfg: cfg, Log: log, tpl: t}, nil
+	return &GUI{Store: store, Registry: reg, Hub: hub, Cfg: cfg, Log: log, Limiter: server.NewRateLimiter(), tpl: t}, nil
 }
 
 func (g *GUI) Router() http.Handler {
@@ -43,15 +46,14 @@ func (g *GUI) Router() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(g.setupGate)
 
-		r.Get("/setup", g.getSetup)
-		r.Post("/setup", g.postSetup)
-
-		r.Get("/login", g.getLogin)
-		r.Post("/login", g.postLogin)
+		r.Group(func(r chi.Router) {
+			r.Use(g.authRateLimit)
+			r.Get("/login", g.getLogin)
+			r.Post("/login", g.postLogin)
+			r.Get("/token-login", g.getTokenLogin)
+			r.Post("/token-login", g.postTokenLogin)
+		})
 		r.Post("/logout", g.postLogout)
-
-		r.Get("/token-login", g.getTokenLogin)
-		r.Post("/token-login", g.postTokenLogin)
 		r.Post("/token-logout", g.postTokenLogout)
 		r.Group(func(r chi.Router) {
 			r.Use(g.requireTokenAuth)
@@ -72,11 +74,6 @@ func (g *GUI) Router() http.Handler {
 			r.Post("/access/new", g.postNewAccess)
 			r.Post("/access/{id}/edit", g.postEditAccess)
 			r.Post("/access/{id}/delete", g.postDeleteAccess)
-			r.Get("/security", g.getSecurity)
-			r.Post("/security/ban", g.postBan)
-			r.Post("/security/unban", g.postUnban)
-			r.Post("/security/allowlist/add", g.postAddAllowedIP)
-			r.Post("/security/allowlist/remove", g.postRemoveAllowedIP)
 			r.Get("/logs", g.getLogs)
 			r.Get("/events/dashboard", g.eventsDashboard)
 			r.Get("/events/logs", g.eventsLogs)
@@ -86,21 +83,36 @@ func (g *GUI) Router() http.Handler {
 	return r
 }
 
+func (g *GUI) authRateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if g.Limiter != nil && !g.Limiter.Allow("auth:"+clientIP(r), 10, time.Minute) {
+			http.Error(w, "Too many requests", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func clientIP(r *http.Request) string {
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		if i := strings.Index(fwd, ","); i >= 0 {
+			fwd = fwd[:i]
+		}
+		fwd = strings.TrimSpace(fwd)
+		if fwd != "" {
+			return fwd
+		}
+	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if host != "" {
+		return host
+	}
+	return r.RemoteAddr
+}
+
 func (g *GUI) setupGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n, err := g.Store.CountAdmins(r.Context())
-		if err != nil {
-			http.Error(w, "db error", http.StatusInternalServerError)
-			return
-		}
-		if n == 0 {
-			if r.URL.Path == "/setup" || strings.HasPrefix(r.URL.Path, "/setup/") {
-				next.ServeHTTP(w, r)
-				return
-			}
-			http.Redirect(w, r, "/setup", http.StatusFound)
-			return
-		}
+		// Admins are bootstrapped from ADMIN_USERNAME/ADMIN_PASSWORD on startup.
 		next.ServeHTTP(w, r)
 	})
 }
@@ -138,7 +150,17 @@ func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self'; "+
+				"style-src 'self'; "+
+				"img-src 'self'; "+
+				"font-src 'self'; "+
+				"connect-src 'self'; "+
+				"object-src 'none'; "+
+				"frame-ancestors 'none'; "+
+				"base-uri 'self'; "+
+				"form-action 'self';")
 		w.Header().Set("Permissions-Policy", "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()")
 		next.ServeHTTP(w, r)
 	})

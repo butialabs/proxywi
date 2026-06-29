@@ -25,7 +25,6 @@ type MetricsEvent struct {
 type ProxyLogEvent struct {
 	ID         int64  `json:"id"`
 	TS         int64  `json:"ts"`
-	Origin     string `json:"origin"` // short opaque origin key, never a raw IP
 	User       string `json:"user"`
 	ClientID   int64  `json:"client_id"`
 	ClientName string `json:"client_name"`

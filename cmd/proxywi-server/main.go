@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/butialabs/proxywi/internal/storage"
 	"github.com/butialabs/proxywi/internal/tunnel"
 	"github.com/pires/go-proxyproto"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // runRetentionSweep trims aggregates (30 days, every 6h) and the request log (24h, every 15m)
@@ -76,21 +78,30 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer store.Close()
 
-	cfg.IPHashSecret, err = config.LoadOrCreateIPHashSecret(cfg.DataDir)
-	if err != nil {
-		return err
-	}
-
 	if err := store.NormalizeLegacyClientNames(ctx); err != nil {
 		log.Warn("normalize client names", "err", err)
 	}
 
 	if n, err := store.CountAdmins(ctx); err == nil && n == 0 {
-		log.Info("no admin configured yet, first GUI request will prompt for setup", "main_domain", cfg.MainDomain)
+		if cfg.AdminUsername == "" || cfg.AdminPassword == "" {
+			return fmt.Errorf("no admin exists and ADMIN_USERNAME/ADMIN_PASSWORD are not set")
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("hash admin password: %w", err)
+		}
+		email := cfg.AdminUsername
+		if !strings.Contains(email, "@") {
+			email += "@localhost"
+		}
+		if err := store.CreateFirstAdmin(ctx, cfg.AdminUsername, email, string(hash)); err != nil {
+			return fmt.Errorf("create admin: %w", err)
+		}
+		log.Info("admin user created from environment", "username", cfg.AdminUsername)
 	}
 
 	reg := server.NewRegistry()
-	gate := server.DefaultAuthGate(store, log, cfg.IPHashSecret)
+	gate := server.DefaultAuthGate(store, log)
 	hub := server.NewHub()
 
 	control := &server.Control{

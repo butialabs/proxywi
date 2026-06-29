@@ -70,8 +70,6 @@ networks:
 docker compose -f compose.yml up -d
 ```
 
-Point `PROXYWI_DOMAIN`'s DNS at the host first — ports **80** and **443** must be reachable so Caddy can obtain the Let's Encrypt certificate. Then open `https://proxywi.example.com` in a browser; the first visit walks you through creating the admin user (username, email, password).
-
 ### 2. Enroll an agent
 
 In the GUI, go to **Clients → Add client**. The agent gets an automatic 3-word name; the server shows the token *once* and offers a `docker-compose.yml` tailored to that client
@@ -108,6 +106,8 @@ Run it 10 times in a loop: each call exits through a different agent.
 | `PROXYWI_PROXY_SOCKET_PORT` | `11080`        | SOCKS5 listener (internal; Caddy publishes `1080`) |
 | `PROXYWI_PROXY_PROTOCOL`    | `true`         | Accept the PROXY protocol on the proxy listeners so the real client IP survives the bundled Caddy. Only enable behind a trusted L4 terminator. |
 | `PROXYWI_DATA_DIR`          | `./data`       | Where SQLite data lives |
+| `ADMIN_USERNAME`            | *required*     | Initial administrator username. Created on first start if no admin exists. |
+| `ADMIN_PASSWORD`            | *required*     | Initial administrator password (min. 8 characters). |
 
 > The image ships with the proxy listeners on internal ports and `PROXYWI_PROXY_PROTOCOL=true`; you normally only set `PROXYWI_DOMAIN` and `ACME_EMAIL`. Published ports: **443** (GUI/wss), **8443** (HTTPS proxy), **1080** (SOCKS5), **80** (ACME).
 

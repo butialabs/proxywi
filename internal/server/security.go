@@ -2,16 +2,11 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"log/slog"
-	"math/big"
-	"net"
-	"sync"
 	"time"
 
 	"github.com/butialabs/proxywi/internal/storage"
 	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/time/rate"
 )
 
 var dummyHash []byte
@@ -21,78 +16,13 @@ func init() {
 }
 
 type AuthGate struct {
-	Store  *storage.Store
-	Log    *slog.Logger
-	Secret []byte
-
-	PerIPRate       rate.Limit
-	PerIPBurst      int
-	MinFailureDelay time.Duration
-	MaxFailureDelay time.Duration
-
-	BanStep1Count int
-	BanStep1      time.Duration
-	BanStep2Count int
-	BanStep2      time.Duration
-	BanStep3Count int
-	BanStep3      time.Duration
-	Window1       time.Duration
-	Window2       time.Duration
-	Window3       time.Duration
-
-	mu       sync.Mutex
-	limiters map[string]*rate.Limiter
+	Store   *storage.Store
+	Log     *slog.Logger
+	Limiter *RateLimiter
 }
 
-func DefaultAuthGate(store *storage.Store, log *slog.Logger, secret []byte) *AuthGate {
-	return &AuthGate{
-		Store:           store,
-		Log:             log,
-		Secret:          secret,
-		PerIPRate:       rate.Every(6 * time.Second),
-		PerIPBurst:      5,
-		MinFailureDelay: 500 * time.Millisecond,
-		MaxFailureDelay: 1500 * time.Millisecond,
-		BanStep1Count:   5,
-		BanStep1:        5 * time.Minute,
-		BanStep2Count:   15,
-		BanStep2:        time.Hour,
-		BanStep3Count:   50,
-		BanStep3:        24 * time.Hour,
-		Window1:         10 * time.Minute,
-		Window2:         time.Hour,
-		Window3:         24 * time.Hour,
-		limiters:        map[string]*rate.Limiter{},
-	}
-}
-
-func (g *AuthGate) limiterFor(ip string) *rate.Limiter {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	lim, ok := g.limiters[ip]
-	if !ok {
-		lim = rate.NewLimiter(g.PerIPRate, g.PerIPBurst)
-		g.limiters[ip] = lim
-	}
-	return lim
-}
-
-func (g *AuthGate) Origin(ip string) string { return HashOrigin(g.Secret, ip) }
-
-func (g *AuthGate) CheckPreAuth(ctx context.Context, sourceIP string) error {
-	if allowed, _ := g.Store.IsIPAllowed(ctx, sourceIP); allowed {
-		return nil
-	}
-	
-	origin := g.Origin(sourceIP)
-	ban, err := g.Store.ActiveBan(ctx, origin)
-	if err == nil && ban != nil {
-		return ErrBanned
-	}
-	if !g.limiterFor(origin).Allow() {
-		return ErrRateLimited
-	}
-	return nil
+func DefaultAuthGate(store *storage.Store, log *slog.Logger) *AuthGate {
+	return &AuthGate{Store: store, Log: log, Limiter: NewRateLimiter()}
 }
 
 func (g *AuthGate) VerifyCredentials(ctx context.Context, username, password string) (*storage.User, bool) {
@@ -110,59 +40,11 @@ func (g *AuthGate) VerifyCredentials(ctx context.Context, username, password str
 	return u, true
 }
 
-func (g *AuthGate) VerifySourceAllowed(u *storage.User, sourceIP string) bool {
-	if len(u.AllowedSourceCIDRs) == 0 {
+func (g *AuthGate) AllowProxyRequest(user string) bool {
+	if g.Limiter == nil {
 		return true
 	}
-	ip := net.ParseIP(sourceIP)
-	if ip == nil {
-		return false
-	}
-	for _, c := range u.AllowedSourceCIDRs {
-		_, n, err := net.ParseCIDR(c)
-		if err != nil {
-			continue
-		}
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-func (g *AuthGate) RegisterFailure(ctx context.Context, sourceIP, username, protocol string) {
-	origin := g.Origin(sourceIP)
-	if err := g.Store.RecordAuthFailure(ctx, origin, username, protocol); err != nil {
-		g.Log.Warn("record auth failure", "err", err)
-	}
-
-	now := time.Now()
-	if n, _ := g.Store.CountAuthFailuresSince(ctx, origin, now.Add(-g.Window3)); n >= g.BanStep3Count {
-		_ = g.Store.UpsertBan(ctx, origin, now.Add(g.BanStep3), "auto: threshold 3", n)
-	} else if n, _ := g.Store.CountAuthFailuresSince(ctx, origin, now.Add(-g.Window2)); n >= g.BanStep2Count {
-		_ = g.Store.UpsertBan(ctx, origin, now.Add(g.BanStep2), "auto: threshold 2", n)
-	} else if n, _ := g.Store.CountAuthFailuresSince(ctx, origin, now.Add(-g.Window1)); n >= g.BanStep1Count {
-		_ = g.Store.UpsertBan(ctx, origin, now.Add(g.BanStep1), "auto: threshold 1", n)
-	}
-
-	g.sleepJitter()
-}
-
-func (g *AuthGate) sleepJitter() {
-	minMS := int64(g.MinFailureDelay / time.Millisecond)
-	maxMS := int64(g.MaxFailureDelay / time.Millisecond)
-	if maxMS <= minMS {
-		time.Sleep(g.MinFailureDelay)
-		return
-	}
-	r, err := rand.Int(rand.Reader, big.NewInt(maxMS-minMS))
-	var d time.Duration
-	if err != nil {
-		d = g.MinFailureDelay
-	} else {
-		d = time.Duration(minMS+r.Int64()) * time.Millisecond
-	}
-	time.Sleep(d)
+	return g.Limiter.Allow("proxy:"+user, 5, time.Second)
 }
 
 type authError string
@@ -170,8 +52,5 @@ type authError string
 func (e authError) Error() string { return string(e) }
 
 const (
-	ErrBanned      = authError("source ip banned")
-	ErrRateLimited = authError("rate limited")
-	ErrBadCreds    = authError("invalid credentials")
-	ErrSourceDenied = authError("source ip not allowed for user")
+	ErrBadCreds = authError("invalid credentials")
 )
