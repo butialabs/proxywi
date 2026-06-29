@@ -41,6 +41,8 @@ jobs:
           docker run -d --name pw \
             -e PROXYWI_DOMAIN=localhost \
             -e ACME_EMAIL=test@localhost \
+            -e ADMIN_USERNAME=admin \
+            -e ADMIN_PASSWORD=admin \
             -p 3000:3000 -p 8080:8080 proxywi:ci
 
       - name: Wait for health
