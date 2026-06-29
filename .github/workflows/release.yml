@@ -1,4 +1,4 @@
-name: release
+name: Release
 
 # v*-server  → publishes proxywi-server only
 # v*-client  → publishes proxywi-client only
@@ -43,19 +43,42 @@ jobs:
           COMPONENT_INPUT: ${{ inputs.component }}
         run: |
           server=false; client=false
-          case "${{ github.event_name }}" in
+          EVENT_NAME="${{ github.event_name }}"
+          REF_NAME="${{ github.ref_name }}"
+          case "$EVENT_NAME" in
             workflow_dispatch)
               [[ "$COMPONENT_INPUT" == "both" || "$COMPONENT_INPUT" == "server" ]] && server=true
               [[ "$COMPONENT_INPUT" == "both" || "$COMPONENT_INPUT" == "client" ]] && client=true
               ;;
             push)
-              [[ "${{ github.ref_name }}" == *"-server" ]] && server=true
-              [[ "${{ github.ref_name }}" == *"-client" ]] && client=true
+              [[ "$REF_NAME" == *"-server" ]] && server=true
+              [[ "$REF_NAME" == *"-client" ]] && client=true
               ;;
           esac
           echo "server_build=$server" >> "$GITHUB_OUTPUT"
           echo "client_build=$client" >> "$GITHUB_OUTPUT"
           echo "server=$server client=$client"
+
+  setup:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      prerelease: ${{ steps.vars.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve version
+        id: vars
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ "$VERSION" =~ -(alpha|beta|rc|pre|dev) ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
   # SERVER
   server-build:
@@ -144,12 +167,16 @@ jobs:
       - name: Create manifest list
         working-directory: /tmp/digests
         run: |
-          tags=$(jq -cr '.tags | map("--tag " + .) | join(" ")' <<< "${DOCKER_METADATA_OUTPUT_JSON}")
-          refs=""
-          for f in *; do
-            refs="$refs ${REGISTRY}/${IMAGE_OWNER}/proxywi-server@$(cat "$f")"
+          mapfile -t tags < <(jq -cr '.tags[]' <<< "${DOCKER_METADATA_OUTPUT_JSON}")
+          tag_args=()
+          for t in "${tags[@]}"; do
+            tag_args+=("--tag" "$t")
           done
-          docker buildx imagetools create $tags $refs
+          refs=()
+          for f in *; do
+            refs+=("${REGISTRY}/${IMAGE_OWNER}/proxywi-server@$(cat "$f")")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
 
       - name: Inspect
         run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-server:${{ steps.meta.outputs.version }}
@@ -241,12 +268,85 @@ jobs:
       - name: Create manifest list
         working-directory: /tmp/digests
         run: |
-          tags=$(jq -cr '.tags | map("--tag " + .) | join(" ")' <<< "${DOCKER_METADATA_OUTPUT_JSON}")
-          refs=""
-          for f in *; do
-            refs="$refs ${REGISTRY}/${IMAGE_OWNER}/proxywi-client@$(cat "$f")"
+          mapfile -t tags < <(jq -cr '.tags[]' <<< "${DOCKER_METADATA_OUTPUT_JSON}")
+          tag_args=()
+          for t in "${tags[@]}"; do
+            tag_args+=("--tag" "$t")
           done
-          docker buildx imagetools create $tags $refs
+          refs=()
+          for f in *; do
+            refs+=("${REGISTRY}/${IMAGE_OWNER}/proxywi-client@$(cat "$f")")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
 
       - name: Inspect
         run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-client:${{ steps.meta.outputs.version }}
+
+  publish-release:
+    name: 📦 Publish release
+    runs-on: ubuntu-24.04
+    needs: [setup, server-merge, client-merge]
+    if: always() && github.event_name == 'push' && github.ref_type == 'tag' && (needs.server-merge.result == 'success' || needs.client-merge.result == 'success')
+    permissions:
+      contents: write
+      models: read
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 📋 Get commits since last tag
+        id: commits
+        run: |
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PREVIOUS_TAG" ]; then
+            LOG=$(git log --pretty=format:"%s (%h)" HEAD)
+          else
+            LOG=$(git log --pretty=format:"%s (%h)" "$PREVIOUS_TAG"..HEAD)
+          fi
+          {
+            echo "LOG<<EOF"
+            echo "$LOG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 🤖 Generate release notes
+        id: ai_notes
+        run: |
+          RESPONSE=$(curl -s https://models.inference.ai.azure.com/chat/completions \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg version "${{ needs.setup.outputs.version }}" \
+              --arg log "${{ steps.commits.outputs.LOG }}" \
+              '{
+                model: "gpt-4o-mini",
+                messages: [
+                  {
+                    role: "system",
+                    content: "You are a technical writer for open source projects. Generate polished, friendly release notes in English from a list of git commits. Group changes into sections using these emojis: 🚀 New Features, 🐛 Bug Fixes, ⚡ Improvements, 💥 Breaking Changes. Omit sections with no entries. Be concise and developer-friendly. Do not include a title or version header."
+                  },
+                  {
+                    role: "user",
+                    content: ("Generate release notes for version " + $version + " from these commits:\n" + $log)
+                  }
+                ]
+              }')"
+          )
+          NOTES=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "Release notes unavailable."')
+          {
+            echo "NOTES<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 📝 Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "🎉 ${{ needs.setup.outputs.version }}"
+          tag_name: ${{ needs.setup.outputs.version }}
+          body: ${{ steps.ai_notes.outputs.NOTES }}
+          draft: false
+          prerelease: ${{ needs.setup.outputs.prerelease }}
