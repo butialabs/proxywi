@@ -7,9 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/butialabs/proxywi/internal/storage"
@@ -41,7 +39,6 @@ func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	ws.SetReadLimit(-1)
 
-	headerIP := clientIP(r)
 	ctx := r.Context()
 
 	handshakeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -66,16 +63,9 @@ func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	remoteIP := headerIP
-	if IsUntrustedPeerIP(remoteIP) && hs.SelfReportedIP != "" {
-		if parsed := net.ParseIP(strings.TrimSpace(hs.SelfReportedIP)); parsed != nil {
-			remoteIP = parsed.String()
-		}
-	}
-
 	clientID, dbClient, err := c.authenticateToken(ctx, hs.Token)
 	if err != nil {
-		c.Log.Warn("handshake auth failed", "ip", remoteIP, "err", err)
+		c.Log.Warn("handshake auth failed", "err", err)
 		_ = writeAck(ctx, ws, tunnel.HandshakeAck{OK: false, Error: "invalid token"})
 		_ = ws.Close(websocket.StatusPolicyViolation, "auth failed")
 		return
@@ -101,25 +91,23 @@ func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	defer session.Close()
 
-	maskedIP := MaskIP(remoteIP)
 	agent := &Agent{
 		ID:        clientID,
 		Name:      dbClient.Name,
-		RemoteIP:  maskedIP,
 		ConnectAt: time.Now(),
 		session:   session,
 	}
 	c.Registry.Add(agent)
 	defer c.Registry.Remove(clientID, agent)
 
-	if err := c.Store.MarkClientSeen(ctx, clientID, maskedIP); err != nil {
+	if err := c.Store.MarkClientSeen(ctx, clientID); err != nil {
 		c.Log.Warn("mark client seen", "err", err)
 	}
 
-	c.Log.Info("agent connected", "id", clientID, "name", dbClient.Name, "ip", remoteIP)
+	c.Log.Info("agent connected", "id", clientID, "name", dbClient.Name)
 	if c.Hub != nil {
 		c.Hub.Publish(Event{Type: "client_online", Data: ClientEvent{
-			ID: clientID, Name: dbClient.Name, RemoteIP: maskedIP,
+			ID: clientID, Name: dbClient.Name,
 		}})
 	}
 
@@ -146,7 +134,7 @@ func (c *Control) readMetaStream(ctx context.Context, agent *Agent) {
 	defer ticker.Stop()
 	go func() {
 		for range ticker.C {
-			_ = c.Store.MarkClientSeen(ctx, agent.ID, agent.RemoteIP)
+			_ = c.Store.MarkClientSeen(ctx, agent.ID)
 		}
 	}()
 
@@ -160,10 +148,9 @@ func (c *Control) readMetaStream(ctx context.Context, agent *Agent) {
 		}
 		if c.Hub != nil && msg.Type == "metrics" {
 			c.Hub.Publish(Event{Type: "metrics", Data: MetricsEvent{
-				ClientID:    agent.ID,
-				BytesIn:     msg.BytesIn,
-				BytesOut:    msg.BytesOut,
-				ActiveConns: msg.ActiveConns,
+				ClientID: agent.ID,
+				BytesIn:  msg.BytesIn,
+				BytesOut: msg.BytesOut,
 			}})
 		}
 	}
@@ -189,26 +176,4 @@ func (c *Control) authenticateToken(ctx context.Context, token string) (int64, *
 func writeAck(ctx context.Context, ws *websocket.Conn, ack tunnel.HandshakeAck) error {
 	b, _ := json.Marshal(ack)
 	return ws.Write(ctx, websocket.MessageText, b)
-}
-
-func clientIP(r *http.Request) string {
-	if v := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); v != "" {
-		return v
-	}
-	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
-		if i := strings.IndexByte(xf, ','); i >= 0 {
-			return strings.TrimSpace(xf[:i])
-		}
-		return strings.TrimSpace(xf)
-	}
-	host := r.RemoteAddr
-	for i := len(host) - 1; i >= 0; i-- {
-		if host[i] == ':' {
-			return host[:i]
-		}
-	}
-	return host
 }

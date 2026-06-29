@@ -1,88 +1,86 @@
 {{define "content"}}
-<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <h3 class="mb-0">{{t "logs.title"}}</h3>
-  <div class="d-flex align-items-center gap-2">
-    <span class="badge bg-body-tertiary border text-body-secondary" id="logs-status">
-      <span class="spinner-border spinner-border-sm me-1" style="width:.75rem;height:.75rem;"></span>
+<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+  <h3 class="text-xl font-semibold">{{t "logs.title"}}</h3>
+  <div class="flex items-center gap-2">
+    <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim" id="logs-status">
+      <span class="inline-block w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin"></span>
       <span id="logs-status-text">{{t "logs.connecting"}}</span>
     </span>
   </div>
 </div>
 
-<div class="card">
-  <div class="card-header bg-body-tertiary d-flex align-items-center flex-wrap gap-2">
+<div class="bg-panel border border-border">
+  <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium flex-wrap">
     <strong>{{t "logs.live"}}</strong>
-    <span class="ms-2 text-body-secondary small">{{tp "logs.total_count" .}}</span>
-    <form class="d-flex align-items-center gap-2 ms-auto flex-wrap" method="get" action="/logs">
-      <select name="user_id" class="form-select form-select-sm" style="width:auto;">
+    <span class="ml-2 text-dim text-sm">{{tp "logs.total_count" .}}</span>
+    <form class="flex items-center gap-2 ml-auto flex-wrap" method="get" action="/logs">
+      <select name="user_id" class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-auto">
         <option value="0" {{if eq .FilterUserID 0}}selected{{end}}>{{t "logs.filter_all_users"}}</option>
         {{range .UserOptions}}
           <option value="{{.ID}}" {{if eq .ID $.FilterUserID}}selected{{end}}>{{.Name}}</option>
         {{end}}
       </select>
-      <select name="client_id" class="form-select form-select-sm" style="width:auto;">
+      <select name="client_id" class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-auto">
         <option value="0" {{if eq .FilterClientID 0}}selected{{end}}>{{t "logs.filter_all_clients"}}</option>
         {{range .ClientOptions}}
           <option value="{{.ID}}" {{if eq .ID $.FilterClientID}}selected{{end}}>{{.Name}}</option>
         {{end}}
       </select>
-      <input type="search" name="q" class="form-control form-control-sm" style="width:auto;" value="{{.FilterSearch}}" placeholder="{{t "logs.filter_search"}}">
-      <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel"></i></button>
-      {{if .HasFilter}}<a class="btn btn-sm btn-outline-secondary" href="/logs"><i class="bi bi-x-lg"></i></a>{{end}}
+      <input type="search" name="q" class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-auto" value="{{.FilterSearch}}" placeholder="{{t "logs.filter_search"}}">
+      <button class="inline-flex items-center gap-1 bg-accent text-bg px-2.5 py-1 text-sm font-medium hover:bg-accent-hi" type="submit"><i class="bi bi-funnel"></i></button>
+      {{if .HasFilter}}<a class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" href="/logs"><i class="bi bi-x-lg"></i></a>{{end}}
     </form>
   </div>
-  <div class="table-responsive">
-    <table class="table table-hover align-middle mb-0">
-      <thead class="bg-body">
-        <tr class="text-body-secondary small text-uppercase">
-          <th>{{t "logs.col_time"}}</th>
-          <th>{{t "logs.col_outcome"}}</th>
-          <th>{{t "logs.col_proto"}}</th>
-          <th>{{t "logs.col_source"}}</th>
-          <th>{{t "logs.col_user"}}</th>
-          <th>{{t "logs.col_client"}}</th>
-          <th>{{t "logs.col_target"}}</th>
-          <th class="text-end">{{t "logs.col_in"}}</th>
-          <th class="text-end">{{t "logs.col_out"}}</th>
-          <th class="text-end">{{t "logs.col_duration"}}</th>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-soft">
+        <tr class="text-dim text-xs uppercase">
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_time"}}</th>
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_outcome"}}</th>
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_proto"}}</th>
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_user"}}</th>
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_client"}}</th>
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_target"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_in"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_out"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_duration"}}</th>
         </tr>
       </thead>
       <tbody id="logs-tbody">
       {{range .Events}}
-        <tr data-id="{{.ID}}">
-          <td class="text-body-secondary small font-monospace">{{.TSHuman}}</td>
-          <td>
-            {{if eq .Outcome "ok"}}<span class="badge bg-success-subtle text-success-emphasis"><i class="bi bi-check-circle me-1"></i>ok</span>
-            {{else if eq .Outcome "denied"}}<span class="badge bg-warning-subtle text-warning-emphasis"><i class="bi bi-slash-circle me-1"></i>denied</span>
-            {{else}}<span class="badge bg-danger-subtle text-danger-emphasis"><i class="bi bi-x-circle me-1"></i>{{.Outcome}}</span>{{end}}
+        <tr data-id="{{.ID}}" class="border-b border-border hover:bg-accent/5">
+          <td class="px-3 py-2 text-dim text-xs font-mono">{{.TSHuman}}</td>
+          <td class="px-3 py-2">
+            {{if eq .Outcome "ok"}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-accent/15 text-accent"><i class="bi bi-check-circle mr-1"></i>ok</span>
+            {{else if eq .Outcome "denied"}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-amber/15 text-amber"><i class="bi bi-slash-circle mr-1"></i>denied</span>
+            {{else}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-danger/15 text-danger"><i class="bi bi-x-circle mr-1"></i>{{.Outcome}}</span>{{end}}
           </td>
-          <td><span class="badge bg-body-secondary text-body-emphasis">{{.Protocol}}</span></td>
-          <td><code>{{.SourceIP}}</code></td>
-          <td>{{.User}}</td>
-          <td>{{.ClientName}}</td>
-          <td class="text-truncate" style="max-width:320px;"><code>{{.Target}}</code></td>
-          <td class="text-end font-monospace">{{.BytesInH}}</td>
-          <td class="text-end font-monospace">{{.BytesOutH}}</td>
-          <td class="text-end font-monospace text-body-secondary">{{.DurationMS}} ms</td>
+          <td class="px-3 py-2"><span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim">{{.Protocol}}</span></td>
+          <td class="px-3 py-2">{{.User}}</td>
+          <td class="px-3 py-2">{{.ClientName}}</td>
+          <td class="px-3 py-2 truncate" style="max-width:320px;"><code class="font-mono text-accent-hi bg-accent/10 border border-accent/15 px-1.5 py-0.5">{{.Target}}</code></td>
+          <td class="px-3 py-2 text-right font-mono">{{.BytesInH}}</td>
+          <td class="px-3 py-2 text-right font-mono">{{.BytesOutH}}</td>
+          <td class="px-3 py-2 text-right font-mono text-dim">{{.DurationMS}} ms</td>
         </tr>
       {{else}}
-        <tr id="logs-empty"><td colspan="10" class="text-center text-body-secondary p-4"><i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>{{t "logs.empty"}}</td></tr>
+        <tr id="logs-empty"><td colspan="9" class="text-center text-dim p-4"><i class="bi bi-inbox text-3xl block mb-2 opacity-50"></i>{{t "logs.empty"}}</td></tr>
       {{end}}
       </tbody>
     </table>
   </div>
   {{if gt .TotalPages 1}}
-  <div class="card-footer d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <span class="text-body-secondary small">{{tp "logs.page_status" .}}</span>
+  <div class="bg-soft border-t border-border px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+    <span class="text-dim text-sm">{{tp "logs.page_status" .}}</span>
     <nav>
-      <ul class="pagination pagination-sm mb-0">
-        <li class="page-item {{if not .HasPrev}}disabled{{end}}">
-          <a class="page-link" {{if .HasPrev}}href="?page={{.PrevPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+      <ul class="flex gap-1">
+        <li class="{{if not .HasPrev}}opacity-40 pointer-events-none{{end}}">
+          <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasPrev}}href="?page={{.PrevPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
             <i class="bi bi-chevron-left"></i> {{t "logs.page_prev"}}
           </a>
         </li>
-        <li class="page-item {{if not .HasNext}}disabled{{end}}">
-          <a class="page-link" {{if .HasNext}}href="?page={{.NextPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+        <li class="{{if not .HasNext}}opacity-40 pointer-events-none{{end}}">
+          <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasNext}}href="?page={{.NextPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
             {{t "logs.page_next"}} <i class="bi bi-chevron-right"></i>
           </a>
         </li>

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"net"
 	"sync"
 	"time"
 )
@@ -13,22 +12,20 @@ type Event struct {
 }
 
 type ClientEvent struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	RemoteIP string `json:"remote_ip,omitempty"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 type MetricsEvent struct {
-	ClientID    int64 `json:"client_id"`
-	BytesIn     int64 `json:"bytes_in"`
-	BytesOut    int64 `json:"bytes_out"`
-	ActiveConns int   `json:"active_conns"`
+	ClientID int64 `json:"client_id"`
+	BytesIn  int64 `json:"bytes_in"`
+	BytesOut int64 `json:"bytes_out"`
 }
 
 type ProxyLogEvent struct {
 	ID         int64  `json:"id"`
 	TS         int64  `json:"ts"`
-	SourceIP   string `json:"source_ip"` // full, unmasked
+	Origin     string `json:"origin"` // short opaque origin key, never a raw IP
 	User       string `json:"user"`
 	ClientID   int64  `json:"client_id"`
 	ClientName string `json:"client_name"`
@@ -74,60 +71,4 @@ func (h *Hub) Subscribe() (<-chan Event, func()) {
 		h.mu.Unlock()
 		close(ch)
 	}
-}
-
-func IsUntrustedPeerIP(ip string) bool {
-	if ip == "" {
-		return true
-	}
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return true
-	}
-	if parsed.IsLoopback() || parsed.IsUnspecified() || parsed.IsLinkLocalUnicast() || parsed.IsPrivate() {
-		return true
-	}
-	if v4 := parsed.To4(); v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
-		return true
-	}
-	return false
-}
-
-func MaskIP(ip string) string {
-	if ip == "" {
-		return ""
-	}
-	if lastIndexByte(ip, ':') < 0 {
-		dots := 0
-		for i := len(ip) - 1; i >= 0; i-- {
-			if ip[i] == '.' {
-				dots++
-				if dots == 2 {
-					return ip[:i] + ".0.0"
-				}
-			}
-		}
-		return ip
-	}
-	if lastIndexByte(ip, ':') >= 0 {
-		count := 0
-		for i := 0; i < len(ip); i++ {
-			if ip[i] == ':' {
-				count++
-				if count == 2 {
-					return ip[:i] + "::"
-				}
-			}
-		}
-	}
-	return ip
-}
-
-func lastIndexByte(s string, c byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == c {
-			return i
-		}
-	}
-	return -1
 }

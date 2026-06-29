@@ -36,7 +36,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	agent := &client.Agent{
 		ServerURL:   serverURL,
 		Token:       cfg.Token,
-		Name:        cfg.Name,
 		TLSInsecure: cfg.TLSInsecure,
 		Log:         log,
 	}

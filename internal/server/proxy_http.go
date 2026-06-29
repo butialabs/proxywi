@@ -23,9 +23,6 @@ type HTTPProxy struct {
 	Hub      *Hub
 }
 
-// IsProxyRequest reports whether r should be handled as a forward-proxy
-// request (CONNECT tunnel or absolute-form URI forwarding) rather than
-// as a request for a resource on this server.
 func IsProxyRequest(r *http.Request) bool {
 	if r.Method == http.MethodConnect {
 		return true
@@ -222,6 +219,7 @@ func (p *HTTPProxy) logEvent(ctx context.Context,
 	clientID int64, clientName string,
 	target, sourceIP, proto, outcome string,
 	bIn, bOut, durMS int64) {
+	origin := p.Gate.Origin(sourceIP)
 	ev := storage.ProxyEvent{
 		TS:         time.Now(),
 		UserID:     userID,
@@ -229,7 +227,7 @@ func (p *HTTPProxy) logEvent(ctx context.Context,
 		ClientID:   clientID,
 		ClientName: clientName,
 		TargetHost: target,
-		SourceIP:   sourceIP,
+		SourceIP:   origin,
 		Protocol:   proto,
 		Outcome:    outcome,
 		BytesIn:    bIn,
@@ -246,7 +244,7 @@ func (p *HTTPProxy) logEvent(ctx context.Context,
 			Type: "proxy_event",
 			Data: ProxyLogEvent{
 				ID: id, TS: ev.TS.Unix(),
-				SourceIP: sourceIP, User: user,
+				Origin: ShortOrigin(origin), User: user,
 				ClientID: clientID, ClientName: clientName,
 				Target: target, Protocol: proto,
 				BytesIn: bIn, BytesOut: bOut,

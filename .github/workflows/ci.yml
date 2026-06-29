@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run build
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  smoke-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build all-in-one image
+        run: docker build -f docker/server/Dockerfile -t proxywi:ci .
+
+      - name: Run container (localhost → Caddy internal CA, no ACME)
+        run: |
+          docker run -d --name pw \
+            -e PROXYWI_DOMAIN=localhost \
+            -e ACME_EMAIL=test@localhost \
+            -p 3000:3000 -p 8080:8080 proxywi:ci
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 \
+               && curl -fsS -o /dev/null http://127.0.0.1:3000/setup; then
+              echo "healthy"; exit 0
+            fi
+            sleep 3
+          done
+          echo "service did not become healthy in time"
+          exit 1
+
+      - name: Container logs
+        if: always()
+        run: docker logs pw || true

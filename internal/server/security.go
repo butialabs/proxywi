@@ -21,8 +21,9 @@ func init() {
 }
 
 type AuthGate struct {
-	Store *storage.Store
-	Log   *slog.Logger
+	Store  *storage.Store
+	Log    *slog.Logger
+	Secret []byte
 
 	PerIPRate       rate.Limit
 	PerIPBurst      int
@@ -43,10 +44,11 @@ type AuthGate struct {
 	limiters map[string]*rate.Limiter
 }
 
-func DefaultAuthGate(store *storage.Store, log *slog.Logger) *AuthGate {
+func DefaultAuthGate(store *storage.Store, log *slog.Logger, secret []byte) *AuthGate {
 	return &AuthGate{
 		Store:           store,
 		Log:             log,
+		Secret:          secret,
 		PerIPRate:       rate.Every(6 * time.Second),
 		PerIPBurst:      5,
 		MinFailureDelay: 500 * time.Millisecond,
@@ -75,15 +77,19 @@ func (g *AuthGate) limiterFor(ip string) *rate.Limiter {
 	return lim
 }
 
+func (g *AuthGate) Origin(ip string) string { return HashOrigin(g.Secret, ip) }
+
 func (g *AuthGate) CheckPreAuth(ctx context.Context, sourceIP string) error {
 	if allowed, _ := g.Store.IsIPAllowed(ctx, sourceIP); allowed {
 		return nil
 	}
-	ban, err := g.Store.ActiveBan(ctx, sourceIP)
+	
+	origin := g.Origin(sourceIP)
+	ban, err := g.Store.ActiveBan(ctx, origin)
 	if err == nil && ban != nil {
 		return ErrBanned
 	}
-	if !g.limiterFor(sourceIP).Allow() {
+	if !g.limiterFor(origin).Allow() {
 		return ErrRateLimited
 	}
 	return nil
@@ -125,17 +131,18 @@ func (g *AuthGate) VerifySourceAllowed(u *storage.User, sourceIP string) bool {
 }
 
 func (g *AuthGate) RegisterFailure(ctx context.Context, sourceIP, username, protocol string) {
-	if err := g.Store.RecordAuthFailure(ctx, sourceIP, username, protocol); err != nil {
+	origin := g.Origin(sourceIP)
+	if err := g.Store.RecordAuthFailure(ctx, origin, username, protocol); err != nil {
 		g.Log.Warn("record auth failure", "err", err)
 	}
 
 	now := time.Now()
-	if n, _ := g.Store.CountAuthFailuresSince(ctx, sourceIP, now.Add(-g.Window3)); n >= g.BanStep3Count {
-		_ = g.Store.UpsertBan(ctx, sourceIP, now.Add(g.BanStep3), "auto: threshold 3", n)
-	} else if n, _ := g.Store.CountAuthFailuresSince(ctx, sourceIP, now.Add(-g.Window2)); n >= g.BanStep2Count {
-		_ = g.Store.UpsertBan(ctx, sourceIP, now.Add(g.BanStep2), "auto: threshold 2", n)
-	} else if n, _ := g.Store.CountAuthFailuresSince(ctx, sourceIP, now.Add(-g.Window1)); n >= g.BanStep1Count {
-		_ = g.Store.UpsertBan(ctx, sourceIP, now.Add(g.BanStep1), "auto: threshold 1", n)
+	if n, _ := g.Store.CountAuthFailuresSince(ctx, origin, now.Add(-g.Window3)); n >= g.BanStep3Count {
+		_ = g.Store.UpsertBan(ctx, origin, now.Add(g.BanStep3), "auto: threshold 3", n)
+	} else if n, _ := g.Store.CountAuthFailuresSince(ctx, origin, now.Add(-g.Window2)); n >= g.BanStep2Count {
+		_ = g.Store.UpsertBan(ctx, origin, now.Add(g.BanStep2), "auto: threshold 2", n)
+	} else if n, _ := g.Store.CountAuthFailuresSince(ctx, origin, now.Add(-g.Window1)); n >= g.BanStep1Count {
+		_ = g.Store.UpsertBan(ctx, origin, now.Add(g.BanStep1), "auto: threshold 1", n)
 	}
 
 	g.sleepJitter()

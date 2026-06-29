@@ -1,0 +1,28 @@
+{
+	email {$ACME_EMAIL}
+
+	layer4 {
+		:8443 {
+			route {
+				tls
+				proxy {
+					proxy_protocol v2
+					upstream 127.0.0.1:8080
+				}
+			}
+		}
+
+		:1080 {
+			route {
+				proxy {
+					proxy_protocol v2
+					upstream 127.0.0.1:11080
+				}
+			}
+		}
+	}
+}
+
+{$PROXYWI_DOMAIN} {
+	reverse_proxy 127.0.0.1:3000
+}

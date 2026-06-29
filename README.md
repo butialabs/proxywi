@@ -4,39 +4,33 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/butialabs/proxywi)
 
-Is a cloud proxy pool that lets you route HTTP(S) traffic through a fleet of agents you control. Residential boxes, VPS instances, Raspberry Pis, anything that can run Docker. A single public endpoint handles authentication and picks an agent at random for every new connection, so the outbound IP rotates on its own.
+Is a cloud proxy pool that lets you route HTTP(S) traffic through a fleet of agents you control. Residential boxes, VPS instances, Raspberry Pis (x64), anything that can run Docker. A single public endpoint handles authentication and picks an agent at random for every new connection, so the outbound IP rotates on its own.
 
 It is the "bring-your-own-IP" proxy setup most scraping and privacy tools assume you already have, packaged as two Docker images and a web GUI.
-
-> Status: Beta
 
 ---
 
 ## How it works
 
 ```
-proxywi.xyz                     pomar.proxywi.xyz
-(GUI + WS control)              (HTTP / SOCKS5 proxy)
-┌──────────────────────────┐    ┌────────────────────┐
-│ :3000 Admin UI           │    │ :8080 HTTP proxy   │
-│       /ws/control (WS)   │◄─┐ │ :1080 SOCKS5 proxy │
-└──────────────────────────┘  │ └────────────────────┘
-                              │           ▲
-              reverse tunnel  │           │ yamux stream per
-                              │           │ proxied connection
-  ┌───────────────────────────┴───────────┴────────┐
-Client A                  Client B              Client C
-(home, BR)                (VPS, DE)             …
+                         proxywi.example.com
+        ┌──────────────────────────────────────────────────────────────┐
+        │  Caddy (caddy-l4)               proxywi-server                │
+        │  :443  GUI + wss   ───────────► :3000  Admin UI + WS control   │
+        │  :8443 HTTPS proxy ──TLS──────► :8080  HTTP forward proxy      │
+        │  :1080 SOCKS5      ───────────► :11080 SOCKS5 proxy            │
+        │  :80   ACME                     (PROXY protocol → real IP)     │
+        └──────────────────────────────────────────────────────────────┘
+                 ▲ wss (agents dial out)        ▲ yamux stream per
+                 │                              │ proxied connection
+        ┌────────┴───────────────┬─────────────┴────────┐
+     Agent A                  Agent B               Agent C
+   (home, BR)                (VPS, DE)              …
 ```
 
-- The **server** runs as a single Go binary with three listeners:
-  - `3000` serves the admin GUI and the WS control plane (`/ws/control`), this is where agents dial in.
-  - `8080` is the HTTP forward proxy (`CONNECT` + absolute-URI).
-  - `1080` is the SOCKS5 proxy (user/pass auth).
-- All listeners speak plain HTTP/TCP. Terminate TLS in a reverse proxy (nginx, Caddy, Cloudflare, …) if you need `https://` / `wss://` in front.
-- **Agents** run the same binary in client mode. They dial *out* to the server over WS/WSS (so they work behind NAT/firewall without port-forwarding), finish a token handshake, and multiplex proxy streams over the tunnel with [yamux](https://github.com/hashicorp/yamux).
-- When somebody hits `user:pass@pomar.proxywi.xyz:8080` (HTTP) or `user:pass@pomar.proxywi.xyz:1080` (SOCKS5), the server authenticates them, picks a random online agent, opens a new yamux stream to that agent (over the long-lived control tunnel on `3000`), and pipes bytes. Every new connection can land on a different agent → IP rotation by default.
-- Per-agent metrics (bytes in/out, active connections) stream back over a dedicated meta stream and are aggregated per-minute for the dashboard.
+- The **server** ships as a single all-in-one Docker image!
+- **Agents** run the client image. They dial *out* over `wss://` to `/ws/control` (so they work behind NAT/firewall without port-forwarding), finish a **token-only** handshake, and multiplex proxy streams over the tunnel with **yamux**
+- When someone hits `user:pass@proxywi.example.com:8443` (HTTPS proxy) or `user:pass@proxywi.example.com:1080` (SOCKS5), the server authenticates them, picks a random online agent, opens a new yamux stream to that agent over the long-lived control tunnel
 
 ---
 
@@ -45,30 +39,55 @@ Client A                  Client B              Client C
 ### 1. Run the server
 
 ```bash
-curl -L https://raw.githubusercontent.com/butialabs/proxywi/refs/heads/main/compose-server.yml -o compose.yml
-docker compose up -d
+nano compose.yml
+```
+```bash
+services:
+  proxywi-server:
+    container_name: proxywi-server
+    image: ghcr.io/butialabs/proxywi-server:latest
+    restart: unless-stopped
+    environment:
+      PROXYWI_DOMAIN: "proxy.example.com"
+      ACME_EMAIL: "email@example.com"
+    volumes:
+      - ./proxywi/data:/data
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "8443:8443"
+      - "1080:1080"
+    networks:
+      - proxywi-server
+
+networks:
+  proxywi-server:
+    name: proxywi-server
+    driver: bridge
+```
+```bash
+docker compose -f compose.yml up -d
 ```
 
-Open `http://proxywi.xyz:3000` (or whatever reverse proxy you put in front) in a browser, the first visit walks you through creating the admin user (username, email, password).
+Point `PROXYWI_DOMAIN`'s DNS at the host first — ports **80** and **443** must be reachable so Caddy can obtain the Let's Encrypt certificate. Then open `https://proxywi.example.com` in a browser; the first visit walks you through creating the admin user (username, email, password).
 
 ### 2. Enroll an agent
 
-In the GUI, go to **Clients → Add client**, give it a name. The server shows the token *once* and offers a `docker-compose.yml` tailored to that client.
-
-Within a few seconds the client shows as **online** in the dashboard.
+In the GUI, go to **Clients → Add client**. The agent gets an automatic 3-word name; the server shows the token *once* and offers a `docker-compose.yml` tailored to that client
 
 ### 3. Create a proxy user
 
-**Users → New user**. Username, password, optional allowed tags (empty = may use any agent), optional allowed source CIDRs (empty = any caller).
+**Proxy Access → New access**!
 
 ### 4. Use the proxy
 
 ```bash
-# HTTP forward proxy
-curl -x http://user:pass@pomar.proxywi.xyz:8080 https://ifconfig.me/ip
+# HTTP forward proxy over TLS (HTTPS proxy)
+curl -x https://user:pass@proxywi.example.com:8443 https://ifconfig.me/ip
 
 # SOCKS5
-curl -x socks5h://user:pass@pomar.proxywi.xyz:1080 https://ifconfig.me/ip
+curl -x socks5h://user:pass@proxywi.example.com:1080 https://ifconfig.me/ip
 ```
 
 Run it 10 times in a loop: each call exits through a different agent.
@@ -80,72 +99,25 @@ Run it 10 times in a loop: each call exits through a different agent.
 ### Server
 
 | Variable                    | Default              | Purpose |
-|-----------------------------|----------------------|---------|
-| `PROXYWI_MAIN_DOMAIN`       | `proxywi.xyz`        | Public host of the GUI and the control plane agents connect to |
-| `PROXYWI_MAIN_PORT`         | `3000`               | Admin GUI + WS control plane listener |
-| `PROXYWI_PROXY_DOMAIN`      | `pomar.proxywi.xyz`  | Public host of the forward proxy |
-| `PROXYWI_PROXY_HTTP_PORT`   | `8080`               | HTTP forward-proxy listener |
-| `PROXYWI_PROXY_SOCKET_PORT` | `1080`               | SOCKS5 proxy listener |
-| `PROXYWI_DATA_DIR`          | `./data`             | Where SQLite data lives |
+|-----------------------------|----------------|---------|
+| `PROXYWI_DOMAIN`            | *required*     | Public host. Used by the bundled Caddy for automatic HTTPS and by the GUI. Set this in `.env`. |
+| `ACME_EMAIL`               | *required*      | Let's Encrypt contact for the bundled Caddy. Set this in `.env`. |
+| `PROXYWI_MAIN_DOMAIN`       | `proxywi.xyz`  | Host the GUI/control plane reports (set it to `PROXYWI_DOMAIN`) |
+| `PROXYWI_MAIN_PORT`         | `3000`         | Admin GUI + WS control plane listener (internal; Caddy publishes `443`) |
+| `PROXYWI_PROXY_HTTP_PORT`   | `8080`         | HTTP forward-proxy listener (internal; Caddy publishes `8443` over TLS) |
+| `PROXYWI_PROXY_SOCKET_PORT` | `11080`        | SOCKS5 listener (internal; Caddy publishes `1080`) |
+| `PROXYWI_PROXY_PROTOCOL`    | `true`         | Accept the PROXY protocol on the proxy listeners so the real client IP survives the bundled Caddy. Only enable behind a trusted L4 terminator. |
+| `PROXYWI_DATA_DIR`          | `./data`       | Where SQLite data lives |
 
-#### Data permissions
-
-The server image is based on distroless and runs as UID/GID **65532**. If you bind-mount a host directory into `/data`, it must be writable by that user:
-
-```bash
-mkdir -p ./data
-sudo chown -R 65532:65532 ./data
-sudo chmod -R 755 ./data
-```
+> The image ships with the proxy listeners on internal ports and `PROXYWI_PROXY_PROTOCOL=true`; you normally only set `PROXYWI_DOMAIN` and `ACME_EMAIL`. Published ports: **443** (GUI/wss), **8443** (HTTPS proxy), **1080** (SOCKS5), **80** (ACME).
 
 ### Client / agent
 
 | Variable                | Default    | Purpose |
 |-------------------------|------------|---------|
 | `PROXYWI_SERVER`        | *required* | e.g. `ws://proxywi.xyz:3000` or `wss://proxywi.xyz` when a TLS-terminating reverse proxy is in front. Points at `PROXYWI_MAIN_DOMAIN`, not the proxy domain. |
-| `PROXYWI_TOKEN`         | *required* | Token from the GUI, shown once at enrollment |
-| `PROXYWI_CLIENT_NAME`   | hostname   | Display name in the GUI |
+| `PROXYWI_TOKEN`         | *required* | Token from the GUI, shown once at enrollment. This is the only credential the agent needs. |
 | `PROXYWI_TLS_INSECURE`  | `false`    | Skip TLS verification when dialing the control plane over `wss://` behind a self-signed reverse proxy. |
-
----
-
-## Development
-
-Local dev runs the two binaries directly with `go run`, against the SCSS/JS bundle produced by `npm run build`. No Docker required.
-
-### Prerequisites
-
-- Go (see `go.mod` for the minimum version)
-- Node.js + npm (only needed once, to build the GUI assets)
-
-### One-time setup
-
-```bash
-go mod download
-npm install
-npm run build
-npm run watch
-```
-
-### Run the server
-
-```bash
-go run ./cmd/proxywi-server
-```
-
-### Run the client
-
-```bash
-go run ./cmd/proxywi-client
-```
-
----
-
-## License
-
-Proxywi is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0). See [LICENSE](LICENSE) for the full text.
-
-In short: you are free to use, modify, and redistribute Proxywi, including for commercial purposes. However, if you run a modified version as a network service, you **must** make the complete corresponding source code of your modifications available to its users under the same license. This prevents closed-source commercial forks of the project.
 
 ---
 

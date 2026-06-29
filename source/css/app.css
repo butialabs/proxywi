@@ -1,0 +1,54 @@
+@import "tailwindcss";
+@import "bootstrap-icons/font/bootstrap-icons.css";
+
+@source "../../internal/server/gui/templates";
+
+@theme {
+  --color-bg: #0c1110;
+  --color-soft: #101713;
+  --color-panel: #131a17;
+  --color-border: #232c27;
+  --color-border-hi: #2f3d36;
+  --color-fg: #e3e8e5;
+  --color-dim: #9aa8a1;
+  --color-accent: #34d399;
+  --color-accent-hi: #5eead4;
+  --color-amber: #f5b455;
+  --color-danger: #fb7185;
+  --color-info: #56b6e6;
+
+  --font-sans: "Roboto", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/dist/fonts/roboto-latin-wght-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "bootstrap-icons";
+  src: url("/dist/fonts/bootstrap-icons.woff2") format("woff2");
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 28%, transparent);
+  color: #fff;
+}
+
+textarea.compose {
+  font-family: var(--font-mono);
+  white-space: pre;
+}
+
+[x-cloak] {
+  display: none !important;
+}

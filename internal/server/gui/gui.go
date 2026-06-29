@@ -49,12 +49,19 @@ func (g *GUI) Router() http.Handler {
 		r.Post("/login", g.postLogin)
 		r.Post("/logout", g.postLogout)
 
+		r.Get("/token-login", g.getTokenLogin)
+		r.Post("/token-login", g.postTokenLogin)
+		r.Post("/token-logout", g.postTokenLogout)
+		r.Group(func(r chi.Router) {
+			r.Use(g.requireTokenAuth)
+			r.Get("/t/logs", g.getTokenLogs)
+		})
+
 		r.Group(func(r chi.Router) {
 			r.Use(g.requireAuth)
 			r.Get("/", g.getDashboard)
 			r.Get("/clients", g.getClients)
 			r.Post("/clients/new", g.postNewClient)
-			r.Post("/clients/{id}/edit", g.postEditClient)
 			r.Post("/clients/{id}/regenerate", g.postRegenerateClient)
 			r.Get("/clients/{id}/compose", g.getClientCompose)
 			r.Post("/clients/{id}/delete", g.postDeleteClient)

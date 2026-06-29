@@ -1,0 +1,23 @@
+services:
+  proxywi-server:
+    container_name: proxywi-server
+    image: ghcr.io/butialabs/proxywi-server:latest
+    restart: unless-stopped
+    environment:
+      PROXYWI_DOMAIN: "proxy.example.com"
+      ACME_EMAIL: "email@example.com"
+    volumes:
+      - ./proxywi/data:/data
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "8443:8443"
+      - "1080:1080"
+    networks:
+      - proxywi-server
+
+networks:
+  proxywi-server:
+    name: proxywi-server
+    driver: bridge

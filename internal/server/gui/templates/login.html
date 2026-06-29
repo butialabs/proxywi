@@ -1,27 +1,45 @@
 {{define "content"}}
-<div class="row justify-content-center">
-  <div class="col-md-5 col-lg-4">
-    <div class="card shadow-sm border-secondary-subtle mt-4">
-      <div class="card-body p-4">
-        <form method="post" action="/login">
-          <div class="mb-3">
-            <label class="form-label">{{t "login.username"}}</label>
-            <div class="input-group">
-              <span class="input-group-text"><i class="bi bi-person"></i></span>
-              <input type="text" class="form-control" name="username" autofocus required>
-            </div>
+<div class="flex justify-center">
+  <div class="w-full max-w-md mt-4 flex flex-col gap-4">
+
+    <div class="bg-panel border border-border">
+      <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium">
+        <i class="bi bi-key"></i>{{t "token_login.title"}}
+      </div>
+      <div class="p-4">
+        <p class="text-dim text-sm mb-3">{{t "token_login.subtitle"}}</p>
+        <form method="post" action="/token-login">
+          <label class="block text-sm text-dim mb-1">{{t "token_login.token"}}</label>
+          <div class="flex mb-3">
+            <span class="inline-flex items-center px-2 bg-soft border border-border-hi border-r-0 text-dim"><i class="bi bi-key"></i></span>
+            <input type="password" class="flex-1 bg-soft border border-border-hi border-l-0 px-2 py-1.5 text-fg font-mono focus:outline-none focus:ring-2 focus:ring-accent/40" name="token" autocomplete="off" required>
           </div>
-          <div class="mb-3">
-            <label class="form-label">{{t "login.password"}}</label>
-            <div class="input-group">
-              <span class="input-group-text"><i class="bi bi-lock"></i></span>
-              <input type="password" class="form-control" name="password" required>
-            </div>
-          </div>
-          <button class="btn btn-success w-100" type="submit"><i class="bi bi-box-arrow-in-right me-1"></i>{{t "login.submit"}}</button>
+          <button class="inline-flex items-center justify-center gap-1 bg-accent text-bg px-3 py-1.5 text-sm font-medium hover:bg-accent-hi w-full" type="submit"><i class="bi bi-box-arrow-in-right"></i>{{t "token_login.submit"}}</button>
         </form>
       </div>
     </div>
+
+    <div class="bg-panel border border-border">
+      <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium">
+        <i class="bi bi-shield-lock"></i>{{t "login.admin_title"}}
+      </div>
+      <div class="p-4">
+        <form method="post" action="/login">
+          <label class="block text-sm text-dim mb-1">{{t "login.username"}}</label>
+          <div class="flex mb-3">
+            <span class="inline-flex items-center px-2 bg-soft border border-border-hi border-r-0 text-dim"><i class="bi bi-person"></i></span>
+            <input type="text" class="flex-1 bg-soft border border-border-hi border-l-0 px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40" name="username" required>
+          </div>
+          <label class="block text-sm text-dim mb-1">{{t "login.password"}}</label>
+          <div class="flex mb-3">
+            <span class="inline-flex items-center px-2 bg-soft border border-border-hi border-r-0 text-dim"><i class="bi bi-lock"></i></span>
+            <input type="password" class="flex-1 bg-soft border border-border-hi border-l-0 px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40" name="password" required>
+          </div>
+          <button class="inline-flex items-center justify-center gap-1 bg-accent text-bg px-3 py-1.5 text-sm font-medium hover:bg-accent-hi w-full" type="submit"><i class="bi bi-box-arrow-in-right"></i>{{t "login.submit"}}</button>
+        </form>
+      </div>
+    </div>
+
   </div>
 </div>
 {{end}}

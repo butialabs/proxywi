@@ -7,7 +7,6 @@ import (
 	"net"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/butialabs/proxywi/internal/tunnel"
@@ -17,19 +16,10 @@ import (
 type Agent struct {
 	ID        int64
 	Name      string
-	RemoteIP  string
 	ConnectAt time.Time
 
 	session *yamux.Session
-
-	bytesIn     atomic.Int64
-	bytesOut    atomic.Int64
-	activeConns atomic.Int64
 }
-
-func (a *Agent) BytesIn() int64     { return a.bytesIn.Load() }
-func (a *Agent) BytesOut() int64    { return a.bytesOut.Load() }
-func (a *Agent) ActiveConns() int64 { return a.activeConns.Load() }
 
 func (a *Agent) OpenProxyStream(ctx context.Context, target string) (net.Conn, error) {
 	stream, err := a.session.Open()
@@ -44,37 +34,7 @@ func (a *Agent) OpenProxyStream(ctx context.Context, target string) (net.Conn, e
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 	_ = stream.SetDeadline(time.Time{})
-	a.activeConns.Add(1)
-	return &countingConn{Conn: stream, agent: a}, nil
-}
-
-type countingConn struct {
-	net.Conn
-	agent  *Agent
-	closed atomic.Bool
-}
-
-func (c *countingConn) Read(p []byte) (int, error) {
-	n, err := c.Conn.Read(p)
-	if n > 0 {
-		c.agent.bytesIn.Add(int64(n))
-	}
-	return n, err
-}
-
-func (c *countingConn) Write(p []byte) (int, error) {
-	n, err := c.Conn.Write(p)
-	if n > 0 {
-		c.agent.bytesOut.Add(int64(n))
-	}
-	return n, err
-}
-
-func (c *countingConn) Close() error {
-	if c.closed.CompareAndSwap(false, true) {
-		c.agent.activeConns.Add(-1)
-	}
-	return c.Conn.Close()
+	return stream, nil
 }
 
 type Registry struct {

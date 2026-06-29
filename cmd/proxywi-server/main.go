@@ -18,6 +18,7 @@ import (
 	"github.com/butialabs/proxywi/internal/server/gui"
 	"github.com/butialabs/proxywi/internal/storage"
 	"github.com/butialabs/proxywi/internal/tunnel"
+	"github.com/pires/go-proxyproto"
 )
 
 // runRetentionSweep trims aggregates (30 days, every 6h) and the request log (24h, every 15m)
@@ -75,12 +76,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer store.Close()
 
+	cfg.IPHashSecret, err = config.LoadOrCreateIPHashSecret(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+
+	if err := store.NormalizeLegacyClientNames(ctx); err != nil {
+		log.Warn("normalize client names", "err", err)
+	}
+
 	if n, err := store.CountAdmins(ctx); err == nil && n == 0 {
 		log.Info("no admin configured yet, first GUI request will prompt for setup", "main_domain", cfg.MainDomain)
 	}
 
 	reg := server.NewRegistry()
-	gate := server.DefaultAuthGate(store, log)
+	gate := server.DefaultAuthGate(store, log, cfg.IPHashSecret)
 	hub := server.NewHub()
 
 	control := &server.Control{
@@ -144,9 +154,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	httpLn, err := net.Listen("tcp", cfg.HTTPAddr)
+	if err != nil {
+		return fmt.Errorf("listen http %s: %w", cfg.HTTPAddr, err)
+	}
 	socksLn, err := net.Listen("tcp", cfg.SOCKSAddr)
 	if err != nil {
 		return fmt.Errorf("listen socks %s: %w", cfg.SOCKSAddr, err)
+	}
+	if cfg.ProxyProtocol {
+		log.Info("PROXY protocol enabled on proxy listeners", "http", cfg.HTTPAddr, "socks", cfg.SOCKSAddr)
+		httpLn = &proxyproto.Listener{Listener: httpLn}
+		socksLn = &proxyproto.Listener{Listener: socksLn}
 	}
 
 	var wg sync.WaitGroup
@@ -155,7 +174,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		errCh <- serveHTTP(srv, cfg.HTTPAddr, log, "http-proxy")
+		errCh <- serveListener(srv, httpLn, log, "http-proxy")
 	}()
 
 	wg.Add(1)
@@ -201,6 +220,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 func serveHTTP(srv *http.Server, addr string, log *slog.Logger, role string) error {
 	log.Info("listening", "addr", addr, "role", role)
 	err := srv.ListenAndServe()
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+func serveListener(srv *http.Server, ln net.Listener, log *slog.Logger, role string) error {
+	log.Info("listening", "addr", ln.Addr().String(), "role", role)
+	err := srv.Serve(ln)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

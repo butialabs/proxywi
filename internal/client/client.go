@@ -23,7 +23,6 @@ import (
 type Agent struct {
 	ServerURL   string
 	Token       string
-	Name        string
 	TLSInsecure bool
 	Log         *slog.Logger
 }
@@ -58,7 +57,6 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := ws.Write(dialCtx, websocket.MessageText, mustJSON(tunnel.Handshake{
 		Version:        tunnel.ProtocolVersion,
 		Token:          a.Token,
-		Name:           a.Name,
 		SelfReportedIP: publicIP,
 	})); err != nil {
 		return fmt.Errorf("write handshake: %w", err)

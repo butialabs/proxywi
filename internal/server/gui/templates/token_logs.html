@@ -1,0 +1,50 @@
+{{define "content"}}
+<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+  <div>
+    <h3 class="text-xl font-semibold">{{t "token_logs.title"}}</h3>
+    {{if .ClientName}}<span class="text-dim text-sm"><i class="bi bi-hdd-network mr-1"></i>{{.ClientName}}</span>{{end}}
+  </div>
+  <form method="post" action="/token-logout">
+    <button class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" type="submit"><i class="bi bi-box-arrow-right mr-1"></i>{{t "token_logs.signout"}}</button>
+  </form>
+</div>
+
+<div class="bg-panel border border-border">
+  <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium"><strong>{{t "token_logs.recent"}}</strong></div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-soft">
+        <tr class="text-dim text-xs uppercase">
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_time"}}</th>
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_outcome"}}</th>
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_proto"}}</th>
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_target"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_in"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_out"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_duration"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Events}}
+        <tr class="border-b border-border hover:bg-accent/5">
+          <td class="px-3 py-2 text-dim text-xs font-mono">{{.TSHuman}}</td>
+          <td class="px-3 py-2">
+            {{if eq .Outcome "ok"}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-accent/15 text-accent"><i class="bi bi-check-circle mr-1"></i>ok</span>
+            {{else if eq .Outcome "denied"}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-amber/15 text-amber"><i class="bi bi-slash-circle mr-1"></i>denied</span>
+            {{else}}<span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-danger/15 text-danger"><i class="bi bi-x-circle mr-1"></i>{{.Outcome}}</span>{{end}}
+          </td>
+          <td class="px-3 py-2"><span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim">{{.Protocol}}</span></td>
+          <td class="px-3 py-2 truncate" style="max-width:360px;"><code class="font-mono text-accent-hi bg-accent/10 border border-accent/15 px-1.5 py-0.5">{{.Target}}</code></td>
+          <td class="px-3 py-2 text-right font-mono">{{.BytesInH}}</td>
+          <td class="px-3 py-2 text-right font-mono">{{.BytesOutH}}</td>
+          <td class="px-3 py-2 text-right font-mono text-dim">{{.DurationMS}} ms</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="7" class="text-center text-dim p-4"><i class="bi bi-inbox text-3xl block mb-2 opacity-50"></i>{{t "logs.empty"}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}
+{{template "layout" .}}

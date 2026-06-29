@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
+	petname "github.com/dustinkirkland/golang-petname"
 	"github.com/golang-migrate/migrate/v4"
 	migratesqlite "github.com/golang-migrate/migrate/v4/database/sqlite"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
@@ -178,12 +180,42 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 	return err
 }
 
+func (s *Store) CreateTokenSession(ctx context.Context, clientID int64, ttl time.Duration) (string, error) {
+	id := randomHex(24)
+	exp := time.Now().Add(ttl).Unix()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO token_sessions (id, client_id, expires_at) VALUES (?, ?, ?)`, id, clientID, exp)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (s *Store) LookupTokenSession(ctx context.Context, id string) (int64, bool, error) {
+	var clientID, exp int64
+	err := s.db.QueryRowContext(ctx, `SELECT client_id, expires_at FROM token_sessions WHERE id = ?`, id).Scan(&clientID, &exp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if time.Now().Unix() > exp {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM token_sessions WHERE id = ?`, id)
+		return 0, false, nil
+	}
+	return clientID, true, nil
+}
+
+func (s *Store) DeleteTokenSession(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM token_sessions WHERE id = ?`, id)
+	return err
+}
+
 type Client struct {
 	ID        int64
 	Name      string
 	TokenHash string
 	LastSeen  time.Time
-	CurrentIP string
 	CreatedAt time.Time
 }
 
@@ -197,8 +229,67 @@ func (s *Store) CreateClient(ctx context.Context, name, tokenHash string) (int64
 	return res.LastInsertId()
 }
 
+// clientNameRe matches the auto-generated adjective-adjective-noun format.
+var clientNameRe = regexp.MustCompile(`^[a-z]+-[a-z]+-[a-z]+$`)
+
+func (s *Store) clientNameExists(ctx context.Context, name string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM clients WHERE name = ?`, name).Scan(&n)
+	return n > 0, err
+}
+
+// GenerateUniqueClientName returns a fresh 3-word pet name not yet used by any client.
+func (s *Store) GenerateUniqueClientName(ctx context.Context) (string, error) {
+	for i := 0; i < 50; i++ {
+		name := petname.Generate(3, "-")
+		exists, err := s.clientNameExists(ctx, name)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("could not generate a unique client name")
+}
+
+// NormalizeLegacyClientNames renames any client whose name predates the
+// generated adjective-adjective-noun format. Idempotent.
+func (s *Store) NormalizeLegacyClientNames(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM clients`)
+	if err != nil {
+		return err
+	}
+	var legacyIDs []int64
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return err
+		}
+		if !clientNameRe.MatchString(name) {
+			legacyIDs = append(legacyIDs, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range legacyIDs {
+		name, err := s.GenerateUniqueClientName(ctx)
+		if err != nil {
+			return err
+		}
+		if err := s.UpdateClientName(ctx, id, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, token_hash, last_seen_at, current_ip, created_at FROM clients ORDER BY id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, token_hash, last_seen_at, created_at FROM clients ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +298,7 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 	for rows.Next() {
 		var c Client
 		var last, created int64
-		if err := rows.Scan(&c.ID, &c.Name, &c.TokenHash, &last, &c.CurrentIP, &created); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.TokenHash, &last, &created); err != nil {
 			return nil, err
 		}
 		c.LastSeen = time.Unix(last, 0)
@@ -218,10 +309,10 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 }
 
 func (s *Store) ClientByID(ctx context.Context, id int64) (*Client, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, last_seen_at, current_ip, created_at FROM clients WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, last_seen_at, created_at FROM clients WHERE id = ?`, id)
 	var c Client
 	var last, created int64
-	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &last, &c.CurrentIP, &created); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &last, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -250,9 +341,9 @@ func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]string, err
 	return out, rows.Err()
 }
 
-func (s *Store) MarkClientSeen(ctx context.Context, id int64, ip string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE clients SET last_seen_at = ?, current_ip = ? WHERE id = ?`,
-		time.Now().Unix(), ip, id)
+func (s *Store) MarkClientSeen(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE clients SET last_seen_at = ? WHERE id = ?`,
+		time.Now().Unix(), id)
 	return err
 }
 
@@ -462,6 +553,34 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	return err
 }
 
+// UserUsage summarizes proxy activity for a proxy-access user.
+type UserUsage struct {
+	Count    int
+	LastUsed time.Time
+}
+
+// UserUsageStats returns per-user request counts and last-used time, derived
+// from proxy_events.
+func (s *Store) UserUsageStats(ctx context.Context) (map[int64]UserUsage, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT user_id, COUNT(*), MAX(ts) FROM proxy_events WHERE user_id IS NOT NULL GROUP BY user_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]UserUsage{}
+	for rows.Next() {
+		var uid int64
+		var cnt int
+		var last int64
+		if err := rows.Scan(&uid, &cnt, &last); err != nil {
+			return nil, err
+		}
+		out[uid] = UserUsage{Count: cnt, LastUsed: time.Unix(last, 0)}
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) AddMetricSample(ctx context.Context, clientID int64, bucket time.Time, bytesIn, bytesOut int64, activeConns int) error {
 	ts := bucket.Truncate(time.Minute).Unix()
 	_, err := s.db.ExecContext(ctx,
@@ -545,6 +664,7 @@ func (s *Store) PurgeOldData(ctx context.Context, cutoff time.Time) (int64, erro
 		{`DELETE FROM auth_failures  WHERE ts        < ?`, ts},
 		{`DELETE FROM ip_bans        WHERE banned_until < ?`, now},
 		{`DELETE FROM admin_sessions WHERE expires_at   < ?`, now},
+		{`DELETE FROM token_sessions WHERE expires_at   < ?`, now},
 	} {
 		res, err := s.db.ExecContext(ctx, q.sql, q.arg)
 		if err != nil {
@@ -632,9 +752,9 @@ func (f ProxyEventFilter) where() (string, []any) {
 		args = append(args, f.ClientID)
 	}
 	if f.Search != "" {
-		conds = append(conds, "(e.target_host LIKE ? OR e.source_ip LIKE ?)")
+		conds = append(conds, "e.target_host LIKE ?")
 		like := "%" + f.Search + "%"
-		args = append(args, like, like)
+		args = append(args, like)
 	}
 	return strings.Join(conds, " AND "), args
 }
@@ -769,6 +889,44 @@ func (s *Store) ListBans(ctx context.Context, activeOnly bool) ([]Ban, error) {
 func (s *Store) UnbanIP(ctx context.Context, sourceIP string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM ip_bans WHERE source_ip = ?`, sourceIP)
 	return err
+}
+
+type OriginStat struct {
+	Origin   string
+	Total    int
+	Blocked  int
+	LastSeen time.Time
+}
+
+func (s *Store) OriginStats(ctx context.Context, since time.Time, limit int) ([]OriginStat, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT source_ip,
+		        COUNT(*) AS total,
+		        SUM(CASE WHEN outcome = 'denied' THEN 1 ELSE 0 END) AS blocked,
+		        MAX(ts) AS last_ts
+		 FROM proxy_events
+		 WHERE ts >= ? AND source_ip <> ''
+		 GROUP BY source_ip
+		 ORDER BY total DESC
+		 LIMIT ?`, since.Unix(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OriginStat
+	for rows.Next() {
+		var st OriginStat
+		var last int64
+		if err := rows.Scan(&st.Origin, &st.Total, &st.Blocked, &last); err != nil {
+			return nil, err
+		}
+		st.LastSeen = time.Unix(last, 0)
+		out = append(out, st)
+	}
+	return out, rows.Err()
 }
 
 type AllowedIP struct {

@@ -1,9 +1,9 @@
 (function () {
   if (typeof window === 'undefined') return;
   if (typeof window.Chart !== 'undefined') {
-    window.Chart.defaults.color = '#cbd5e1';
-    window.Chart.defaults.font.family = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-    window.Chart.defaults.borderColor = 'rgba(255,255,255,.08)';
+    window.Chart.defaults.color = '#9aa8a1';
+    window.Chart.defaults.font.family = 'Roboto, system-ui, -apple-system, Segoe UI, sans-serif';
+    window.Chart.defaults.borderColor = 'rgba(255,255,255,.06)';
   }
 
   function humanBytes(n) {
@@ -45,10 +45,10 @@
         labels: data.labels,
         datasets: [
           { label: data.tr.in, data: data.dataIn,
-            borderColor: '#60a5fa', backgroundColor: makeGradient(trafficCtx, '#60a5fa'),
+            borderColor: '#56b6e6', backgroundColor: makeGradient(trafficCtx, '#56b6e6'),
             tension: .4, fill: true, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2 },
           { label: data.tr.out, data: data.dataOut,
-            borderColor: '#4ade80', backgroundColor: makeGradient(trafficCtx, '#4ade80'),
+            borderColor: '#34d399', backgroundColor: makeGradient(trafficCtx, '#34d399'),
             tension: .4, fill: true, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2 }
         ]
       },
@@ -75,7 +75,7 @@
       type: 'doughnut',
       data: {
         labels: [data.tr.in, data.tr.out],
-        datasets: [{ data: [sumIn, sumOut], backgroundColor: ['#60a5fa', '#4ade80'], borderWidth: 0, hoverOffset: 6 }]
+        datasets: [{ data: [sumIn, sumOut], backgroundColor: ['#56b6e6', '#34d399'], borderWidth: 0, hoverOffset: 6 }]
       },
       options: {
         responsive: true, maintainAspectRatio: false, cutout: '68%',
@@ -97,27 +97,26 @@
 
     var perClient = {};
     (data.online || []).forEach(function (c) {
-      perClient[c.id] = { online: true, active: c.active || 0 };
+      perClient[c.id] = { online: true };
     });
-    function totalActive() {
-      return Object.values(perClient).reduce(function (s, c) { return s + (c.active || 0); }, 0);
-    }
     function totalOnline() {
       return Object.values(perClient).filter(function (c) { return c.online; }).length;
     }
     var totalIn = sumIn, totalOut = sumOut;
 
+    function setLive(sel, text) {
+      var el = document.querySelector(sel);
+      if (el) el.textContent = text;
+    }
+
     function updateStats() {
-      document.querySelector('[data-live="online"]').textContent = totalOnline() || data.onlineCount;
-      document.querySelector('[data-live="online-badge"]').textContent = totalOnline() || data.onlineCount;
-      document.querySelector('[data-live="active-conns"]').textContent = totalActive();
-      document.querySelector('[data-live="bytes-in"]').textContent = humanBytes(totalIn);
-      document.querySelector('[data-live="bytes-out"]').textContent = humanBytes(totalOut);
+      setLive('[data-live="online"]', totalOnline() || data.onlineCount);
+      setLive('[data-live="bytes-in"]', humanBytes(totalIn));
+      setLive('[data-live="bytes-out"]', humanBytes(totalOut));
     }
 
     function onMetrics(d) {
-      if (!perClient[d.client_id]) perClient[d.client_id] = { online: true, active: 0 };
-      perClient[d.client_id].active = d.active_conns;
+      if (!perClient[d.client_id]) perClient[d.client_id] = { online: true };
       totalIn += d.bytes_in || 0;
       totalOut += d.bytes_out || 0;
       var last = traffic.data.datasets[0].data.length - 1;
@@ -130,7 +129,7 @@
       ratio.update('none');
       updateStats();
     }
-    function onOnline(d) { perClient[d.id] = { online: true, active: 0 }; updateStats(); }
+    function onOnline(d) { perClient[d.id] = { online: true }; updateStats(); }
     function onOffline(d) { if (perClient[d.id]) perClient[d.id].online = false; updateStats(); }
 
     var es = new EventSource('/events/dashboard');

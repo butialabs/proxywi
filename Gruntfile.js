@@ -1,6 +1,5 @@
-const sass = require('sass');
 const path = require('path');
-const fs = require('fs');
+const { execFile } = require('child_process');
 
 const DIST = 'internal/server/gui/dist';
 
@@ -19,6 +18,14 @@ module.exports = function (grunt) {
           dest: `${DIST}/fonts/`
         }]
       },
+      uifont: {
+        files: [{
+          expand: true,
+          cwd: 'node_modules/@fontsource-variable/roboto/files/',
+          src: ['roboto-latin-wght-normal.woff2'],
+          dest: `${DIST}/fonts/`
+        }]
+      },
       img: {
         files: [{
           expand: true,
@@ -29,31 +36,13 @@ module.exports = function (grunt) {
       }
     },
 
-    sass: {
-      dist: {
-        src: 'source/scss/main.scss',
-        dest: `${DIST}/css/app.css`
-      }
-    },
-
-    cssmin: {
-      options: {
-        level: { 1: { specialComments: 0 } }
-      },
-      dist: {
-        files: {
-          [`${DIST}/css/app.min.css`]: `${DIST}/css/app.css`
-        }
-      }
-    },
-
     concat: {
       options: {
         separator: ';\n'
       },
       dist: {
         src: [
-          'node_modules/bootstrap/dist/js/bootstrap.bundle.min.js',
+          'node_modules/alpinejs/dist/cdn.min.js',
           'node_modules/chart.js/dist/chart.umd.js',
           'source/js/*.js'
         ],
@@ -75,9 +64,9 @@ module.exports = function (grunt) {
     },
 
     watch: {
-      scss: {
-        files: ['source/scss/**/*.scss'],
-        tasks: ['sass', 'cssmin']
+      css: {
+        files: ['source/css/**/*.css', 'internal/server/gui/templates/**/*.html'],
+        tasks: ['tailwind']
       },
       js: {
         files: ['source/js/**/*.js'],
@@ -92,23 +81,24 @@ module.exports = function (grunt) {
 
   grunt.loadNpmTasks('grunt-contrib-clean');
   grunt.loadNpmTasks('grunt-contrib-copy');
-  grunt.loadNpmTasks('grunt-contrib-cssmin');
   grunt.loadNpmTasks('grunt-contrib-concat');
   grunt.loadNpmTasks('grunt-terser');
   grunt.loadNpmTasks('grunt-contrib-watch');
 
-  grunt.registerMultiTask('sass', 'Compile Sass via Dart Sass modern API', function () {
-    const { src, dest } = this.data;
-    const result = sass.compile(src, {
-      loadPaths: ['node_modules'],
-      style: 'expanded',
-      quietDeps: true
+  grunt.registerTask('tailwind', 'Compile Tailwind CSS via the Tailwind CLI', function () {
+    const done = this.async();
+    const bin = path.join('node_modules', '.bin', process.platform === 'win32' ? 'tailwindcss.cmd' : 'tailwindcss');
+    execFile(bin, ['-i', 'source/css/app.css', '-o', `${DIST}/css/app.min.css`, '--minify'], { shell: true }, (err, stdout, stderr) => {
+      if (stderr) grunt.log.writeln(stderr);
+      if (err) {
+        grunt.log.error(err);
+        return done(false);
+      }
+      grunt.log.writeln(`File ${DIST}/css/app.min.css created.`);
+      done();
     });
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.writeFileSync(dest, result.css);
-    grunt.log.writeln(`File ${dest} created.`);
   });
 
-  grunt.registerTask('build', ['clean', 'copy', 'sass', 'cssmin', 'concat', 'terser']);
+  grunt.registerTask('build', ['clean', 'copy', 'tailwind', 'concat', 'terser']);
   grunt.registerTask('default', ['build']);
 };

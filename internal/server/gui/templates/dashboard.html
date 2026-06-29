@@ -1,123 +1,79 @@
 {{define "content"}}
-<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-  <h3 class="mb-0">{{t "dashboard.title"}}</h3>
-  <div class="d-flex align-items-center gap-2 flex-wrap">
-    <span class="badge p-2 bg-body-tertiary border text-body-secondary" id="live-status">
-      <span class="spinner-border spinner-border-sm me-1" style="width:.75rem;height:.75rem;"></span>
+<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+  <h3 class="text-xl font-semibold">{{t "dashboard.title"}}</h3>
+  <div class="flex items-center gap-2 flex-wrap">
+    <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim" id="live-status">
+      <span class="inline-block w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin"></span>
       <span id="live-status-text">{{t "logs.connecting"}}</span>
     </span>
-    <form class="d-flex align-items-center gap-2" method="get" action="/">
-      <select name="user_id" class="form-select form-select-sm" style="width:auto;">
+    <form class="flex items-center gap-2" method="get" action="/">
+      <select name="user_id" class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-auto">
         <option value="0" {{if eq .FilterUserID 0}}selected{{end}}>{{t "dashboard.all_access"}}</option>
         {{range .AccessOptions}}
           <option value="{{.ID}}" {{if eq .ID $.FilterUserID}}selected{{end}}>{{.Name}}</option>
         {{end}}
       </select>
-      <select name="client_id" class="form-select form-select-sm" style="width:auto;">
+      <select name="client_id" class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-auto">
         <option value="0" {{if eq .FilterClientID 0}}selected{{end}}>{{t "dashboard.all_clients"}}</option>
         {{range .ClientOptions}}
           <option value="{{.ID}}" {{if eq .ID $.FilterClientID}}selected{{end}}>{{.Name}}</option>
         {{end}}
       </select>
-      <select name="period" class="form-select form-select-sm" style="width:auto;">
+      <select name="period" class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-auto">
         {{range .PeriodOptions}}<option value="{{.Value}}" {{if eq .Value $.FilterPeriod}}selected{{end}}>{{.Label}}</option>{{end}}
       </select>
-      <button class="btn btn-sm btn-primary" type="submit" title="apply"><i class="bi bi-arrow-clockwise"></i></button>
+      <button class="inline-flex items-center gap-1 bg-accent text-bg px-2.5 py-1 text-sm font-medium hover:bg-accent-hi" type="submit" title="apply"><i class="bi bi-arrow-clockwise"></i></button>
     </form>
   </div>
 </div>
 
-<div class="row row-cols-1 row-cols-md-2 row-cols-xl-4 g-3 mb-4">
-  <div class="col"><div class="card stat-card h-100 border-success-subtle"><div class="card-body">
-    <div class="d-flex align-items-center">
-      <div class="flex-grow-1">
-        <div class="text-body-secondary small text-uppercase">{{t "dashboard.online_clients"}}</div>
-        <div class="h3 mb-0 text-success"><span data-live="online">{{.OnlineCount}}</span><span class="text-body-secondary h6"> / <span data-live="total">{{.TotalClients}}</span></span></div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+  <div><div class="bg-panel border border-border p-0 h-full"><div class="p-4">
+    <div class="flex items-center">
+      <div class="grow">
+        <div class="text-dim text-xs uppercase">{{t "dashboard.online_clients"}}</div>
+        <div class="text-2xl font-semibold text-accent tabular-nums"><span data-live="online">{{.OnlineCount}}</span><span class="text-dim text-base"> / <span data-live="total">{{.TotalClients}}</span></span></div>
       </div>
-      <i class="bi bi-hdd-network fs-1 text-success opacity-50"></i>
+      <i class="bi bi-hdd-network text-4xl text-accent opacity-50"></i>
     </div>
   </div></div></div>
-  <div class="col"><div class="card stat-card h-100 border-info-subtle"><div class="card-body">
-    <div class="d-flex align-items-center">
-      <div class="flex-grow-1">
-        <div class="text-body-secondary small text-uppercase">{{t "dashboard.active_conns"}}</div>
-        <div class="h3 mb-0" data-live="active-conns">{{.ActiveConns}}</div>
+  <div><div class="bg-panel border border-border p-0 h-full"><div class="p-4">
+    <div class="flex items-center">
+      <div class="grow">
+        <div class="text-dim text-xs uppercase">{{t "dashboard.bytes_in"}}</div>
+        <div class="text-2xl font-semibold tabular-nums" data-live="bytes-in">{{.BytesInHuman}}</div>
       </div>
-      <i class="bi bi-activity fs-1 text-info opacity-50"></i>
+      <i class="bi bi-arrow-down-circle text-4xl text-info opacity-50"></i>
     </div>
   </div></div></div>
-  <div class="col"><div class="card stat-card h-100 border-primary-subtle"><div class="card-body">
-    <div class="d-flex align-items-center">
-      <div class="flex-grow-1">
-        <div class="text-body-secondary small text-uppercase">{{t "dashboard.bytes_in"}}</div>
-        <div class="h3 mb-0" data-live="bytes-in">{{.BytesInHuman}}</div>
+  <div><div class="bg-panel border border-border p-0 h-full"><div class="p-4">
+    <div class="flex items-center">
+      <div class="grow">
+        <div class="text-dim text-xs uppercase">{{t "dashboard.bytes_out"}}</div>
+        <div class="text-2xl font-semibold tabular-nums" data-live="bytes-out">{{.BytesOutHuman}}</div>
       </div>
-      <i class="bi bi-arrow-down-circle fs-1 text-primary opacity-50"></i>
-    </div>
-  </div></div></div>
-  <div class="col"><div class="card stat-card h-100 border-success-subtle"><div class="card-body">
-    <div class="d-flex align-items-center">
-      <div class="flex-grow-1">
-        <div class="text-body-secondary small text-uppercase">{{t "dashboard.bytes_out"}}</div>
-        <div class="h3 mb-0" data-live="bytes-out">{{.BytesOutHuman}}</div>
-      </div>
-      <i class="bi bi-arrow-up-circle fs-1 text-success opacity-50"></i>
+      <i class="bi bi-arrow-up-circle text-4xl text-accent opacity-50"></i>
     </div>
   </div></div></div>
 </div>
 
-<div class="row g-3 mb-4">
-  <div class="col-lg-8">
-    <div class="card h-100">
-      <div class="card-header bg-body-tertiary d-flex align-items-center">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
+  <div class="lg:col-span-8">
+    <div class="bg-panel border border-border h-full">
+      <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium">
         <strong>{{t "dashboard.traffic_chart"}}</strong>
-        <span class="ms-2 badge bg-secondary-subtle text-body-secondary">{{.PeriodHuman}}</span>
+        <span class="ml-2 inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-white/5 text-dim">{{.PeriodHuman}}</span>
       </div>
-      <div class="card-body"><canvas id="trafficChart" height="110"></canvas></div>
+      <div class="p-4"><canvas id="trafficChart" height="110"></canvas></div>
     </div>
   </div>
-  <div class="col-lg-4">
-    <div class="card h-100">
-      <div class="card-header bg-body-tertiary d-flex align-items-center">
+  <div class="lg:col-span-4">
+    <div class="bg-panel border border-border h-full">
+      <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium">
         <strong>{{t "dashboard.distribution"}}</strong>
       </div>
-      <div class="card-body"><canvas id="ratioChart" height="180"></canvas></div>
+      <div class="p-4"><canvas id="ratioChart" height="180"></canvas></div>
     </div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="card-header bg-body-tertiary d-flex align-items-center">
-    <strong>{{t "dashboard.online_agents"}}</strong>
-    <span class="ms-auto badge bg-success-subtle text-success-emphasis" data-live="online-badge">{{.OnlineCount}}</span>
-  </div>
-  <div class="table-responsive">
-    {{if .Online}}
-    <table class="table table-hover align-middle mb-0" id="agents-table">
-      <thead>
-        <tr class="text-body-secondary small text-uppercase">
-          <th>{{t "dashboard.col_name"}}</th>
-          <th>{{t "dashboard.col_ip"}}</th>
-          <th>{{t "dashboard.col_connected_for"}}</th>
-          <th class="text-end">{{t "dashboard.col_conns"}}</th>
-          <th class="text-end">{{t "dashboard.col_in"}}</th>
-          <th class="text-end">{{t "dashboard.col_out"}}</th>
-        </tr>
-      </thead>
-      <tbody>
-      {{range .Online}}
-        <tr>
-          <td class="fw-semibold"><i class="bi bi-circle-fill text-success me-2" style="font-size:.55em;"></i>{{.Name}}</td>
-          <td><code>{{.RemoteIP}}</code></td>
-          <td class="text-body-secondary">{{.SinceHuman}}</td>
-          <td class="text-end">{{.ActiveConns}}</td>
-          <td class="text-end font-monospace">{{.BytesInHuman}}</td>
-          <td class="text-end font-monospace">{{.BytesOutHuman}}</td>
-        </tr>
-      {{end}}
-      </tbody>
-    </table>
-    {{else}}<div class="card-body text-center text-body-secondary"><i class="bi bi-cloud-slash fs-1 d-block mb-2 opacity-50"></i>{{t "dashboard.no_agents"}}</div>{{end}}
   </div>
 </div>
 

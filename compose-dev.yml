@@ -7,18 +7,14 @@ services:
     image: proxywi-server:dev
     restart: unless-stopped
     environment:
-      PROXYWI_PROXY_HTTP_PORT:   8080
-      PROXYWI_PROXY_SOCKET_PORT: 1080
-      PROXYWI_MAIN_PORT:         3000
-      PROXYWI_MAIN_DOMAIN:       "proxywi.xyz"
-      PROXYWI_PROXY_DOMAIN:      "pomar.proxywi.xyz"
-      PROXYWI_DATA_DIR:          "/data"
+      PROXYWI_DOMAIN:      "localhost"
+      ACME_EMAIL:          "dev@localhost"
+      PROXYWI_MAIN_DOMAIN: "localhost"
     volumes:
       - ./data:/data
     ports:
-      - "8080:8080"
-      - "1080:1080"
       - "3000:3000"
+      - "8080:8080"
 
   proxywi-client:
     container_name: proxywi-client
@@ -30,6 +26,5 @@ services:
     depends_on:
       - proxywi-server
     environment:
-      PROXYWI_SERVER:        "ws://proxywi-server:3000"
-      PROXYWI_TOKEN:         "4b77d16eb1b21247161dbf7005206b2d9736927adb533cfacf4349b103d04879"
-      PROXYWI_CLIENT_NAME:   "dev-client"
+      PROXYWI_SERVER: "ws://proxywi-server:3000"
+      PROXYWI_TOKEN:  "4b77d16eb1b21247161dbf7005206b2d9736927adb533cfacf4349b103d04879"

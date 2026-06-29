@@ -1,8 +1,11 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -13,23 +16,25 @@ type Server struct {
 	MainDomain  string
 	ProxyDomain string
 	DataDir     string
+	IPHashSecret []byte
+	ProxyProtocol bool
 }
 
 type Client struct {
 	Server      string
 	Token       string
-	Name        string
 	TLSInsecure bool
 }
 
 func LoadServer() (Server, error) {
 	s := Server{
-		HTTPAddr:    ":" + env("PROXYWI_PROXY_HTTP_PORT", "8080"),
-		SOCKSAddr:   ":" + env("PROXYWI_PROXY_SOCKET_PORT", "1080"),
-		MainAddr:    ":" + env("PROXYWI_MAIN_PORT", "3000"),
-		MainDomain:  env("PROXYWI_MAIN_DOMAIN", "proxywi.xyz"),
-		ProxyDomain: env("PROXYWI_PROXY_DOMAIN", "pomar.proxywi.xyz"),
-		DataDir:     env("PROXYWI_DATA_DIR", "./data"),
+		HTTPAddr:      ":" + env("PROXYWI_PROXY_HTTP_PORT", "8080"),
+		SOCKSAddr:     ":" + env("PROXYWI_PROXY_SOCKET_PORT", "1080"),
+		MainAddr:      ":" + env("PROXYWI_MAIN_PORT", "3000"),
+		MainDomain:    env("PROXYWI_MAIN_DOMAIN", "proxywi.xyz"),
+		ProxyDomain:   env("PROXYWI_PROXY_DOMAIN", "pomar.proxywi.xyz"),
+		DataDir:       env("PROXYWI_DATA_DIR", "./data"),
+		ProxyProtocol: boolEnv("PROXYWI_PROXY_PROTOCOL"),
 	}
 	return s, nil
 }
@@ -38,7 +43,6 @@ func LoadClient() (Client, error) {
 	c := Client{
 		Server:      os.Getenv("PROXYWI_SERVER"),
 		Token:       os.Getenv("PROXYWI_TOKEN"),
-		Name:        env("PROXYWI_CLIENT_NAME", hostname()),
 		TLSInsecure: boolEnv("PROXYWI_TLS_INSECURE"),
 	}
 	if c.Server == "" {
@@ -51,6 +55,26 @@ func LoadClient() (Client, error) {
 		return c, fmt.Errorf("PROXYWI_SERVER must start with ws:// or wss://")
 	}
 	return c, nil
+}
+
+func LoadOrCreateIPHashSecret(dataDir string) ([]byte, error) {
+	if v := strings.TrimSpace(os.Getenv("PROXYWI_IP_HASH_SECRET")); v != "" {
+		return []byte(v), nil
+	}
+	path := filepath.Join(dataDir, ".ip_hash_key")
+	if raw, err := os.ReadFile(path); err == nil {
+		if key, err := hex.DecodeString(strings.TrimSpace(string(raw))); err == nil && len(key) > 0 {
+			return key, nil
+		}
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("generate ip hash secret: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(hex.EncodeToString(key)), 0o600); err != nil {
+		return nil, fmt.Errorf("persist ip hash secret: %w", err)
+	}
+	return key, nil
 }
 
 func env(key, def string) string {
@@ -66,12 +90,4 @@ func boolEnv(key string) bool {
 		return true
 	}
 	return false
-}
-
-func hostname() string {
-	h, err := os.Hostname()
-	if err != nil || h == "" {
-		return "unnamed-client"
-	}
-	return h
 }

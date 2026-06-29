@@ -158,15 +158,6 @@ func (g *GUI) postLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-type agentView struct {
-	Name          string
-	RemoteIP      string
-	SinceHuman    string
-	ActiveConns   int64
-	BytesInHuman  string
-	BytesOutHuman string
-}
-
 type clientOption struct {
 	ID   int64
 	Name string
@@ -270,20 +261,10 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 		onlineAgents = filtered
 	}
 
-	var totalIn, totalOut, activeConns int64
-	views := make([]agentView, 0, len(onlineAgents))
+	var totalIn, totalOut int64
 	onlineSeed := make([]map[string]any, 0, len(onlineAgents))
 	for _, a := range onlineAgents {
-		activeConns += a.ActiveConns()
-		views = append(views, agentView{
-			Name:          a.Name,
-			RemoteIP:      a.RemoteIP,
-			SinceHuman:    humanDuration(time.Since(a.ConnectAt)),
-			ActiveConns:   a.ActiveConns(),
-			BytesInHuman:  humanBytes(a.BytesIn()),
-			BytesOutHuman: humanBytes(a.BytesOut()),
-		})
-		onlineSeed = append(onlineSeed, map[string]any{"id": a.ID, "active": a.ActiveConns()})
+		onlineSeed = append(onlineSeed, map[string]any{"id": a.ID})
 	}
 	for _, s := range samples {
 		totalIn += s.BytesIn
@@ -313,12 +294,10 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 		"Title":          "Dashboard",
 		"Active":         "dashboard",
 		"User":           g.adminName(ctx),
-		"OnlineCount":    len(views),
+		"OnlineCount":    len(onlineAgents),
 		"TotalClients":   totalClients,
-		"ActiveConns":    activeConns,
 		"BytesInHuman":   humanBytes(totalIn),
 		"BytesOutHuman":  humanBytes(totalOut),
-		"Online":         views,
 		"ClientOptions":  opts,
 		"AccessOptions":  accessOpts,
 		"PeriodOptions":  pos,
@@ -330,7 +309,7 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 			"labels":      labels,
 			"dataIn":      in,
 			"dataOut":     out,
-			"onlineCount": len(views),
+			"onlineCount": len(onlineAgents),
 			"online":      onlineSeed,
 			"tr": map[string]string{
 				"in":           v.tr("dashboard.chart_in"),
@@ -346,7 +325,6 @@ type clientView struct {
 	ID            int64
 	Name          string
 	Online        bool
-	CurrentIP     string
 	LastSeenHuman string
 }
 
@@ -363,7 +341,6 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 			ID:            c.ID,
 			Name:          c.Name,
 			Online:        online,
-			CurrentIP:     server.MaskIP(c.CurrentIP),
 			LastSeenHuman: humanSince(c.LastSeen),
 		})
 	}
@@ -373,7 +350,6 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 		"User":    g.adminName(ctx),
 		"Clients": views,
 		"ClientsData": map[string]string{
-			"titleTpl":   v.tr("clients.compose_view_title"),
 			"confirmTpl": v.tr("clients.confirm_regenerate"),
 		},
 	}
@@ -381,7 +357,7 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 	if tok := r.URL.Query().Get("token"); tok != "" {
 		if id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64); err == nil {
 			if c, _ := g.Store.ClientByID(ctx, id); c != nil {
-				data["NewCompose"] = buildCompose(c.Name, controlURL(r), tok)
+				data["NewCompose"] = buildCompose(controlURL(r), tok)
 				data["NewComposeName"] = c.Name
 			}
 		}
@@ -401,7 +377,7 @@ func controlURL(r *http.Request) string {
 	return scheme + "://" + host
 }
 
-func buildCompose(clientName, controlURL, token string) string {
+func buildCompose(controlURL, token string) string {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "services:\n")
 	fmt.Fprintf(&b, "  proxywi-client:\n")
@@ -410,15 +386,13 @@ func buildCompose(clientName, controlURL, token string) string {
 	fmt.Fprintf(&b, "    environment:\n")
 	fmt.Fprintf(&b, "      PROXYWI_SERVER: %q\n", controlURL)
 	fmt.Fprintf(&b, "      PROXYWI_TOKEN:  %q\n", token)
-	fmt.Fprintf(&b, "      PROXYWI_CLIENT_NAME: %q\n", clientName)
 	return b.String()
 }
 
 func (g *GUI) postNewClient(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	name := strings.TrimSpace(r.Form.Get("name"))
-	if name == "" {
-		http.Error(w, "name required", http.StatusBadRequest)
+	name, err := g.Store.GenerateUniqueClientName(r.Context())
+	if err != nil {
+		http.Error(w, "name error", http.StatusInternalServerError)
 		return
 	}
 	token := randHex(32)
@@ -433,25 +407,6 @@ func (g *GUI) postNewClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/clients?token=%s&id=%d", token, id), http.StatusFound)
-}
-
-func (g *GUI) postEditClient(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		http.Error(w, "bad id", http.StatusBadRequest)
-		return
-	}
-	_ = r.ParseForm()
-	name := strings.TrimSpace(r.Form.Get("name"))
-	if name == "" {
-		http.Error(w, "name required", http.StatusBadRequest)
-		return
-	}
-	if err := g.Store.UpdateClientName(r.Context(), id, name); err != nil {
-		http.Error(w, "db error", http.StatusInternalServerError)
-		return
-	}
-	http.Redirect(w, r, "/clients", http.StatusFound)
 }
 
 func (g *GUI) postRegenerateClient(w http.ResponseWriter, r *http.Request) {
@@ -491,7 +446,7 @@ func (g *GUI) getClientCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte(buildCompose(c.Name, controlURL(r), composeTokenPlaceholder)))
+	_, _ = w.Write([]byte(buildCompose(controlURL(r), composeTokenPlaceholder)))
 }
 
 func (g *GUI) postDeleteClient(w http.ResponseWriter, r *http.Request) {
@@ -509,7 +464,8 @@ type accessView struct {
 	Username           string
 	AllowedSourceCIDRs []string
 	CIDRsCSV           string
-	CreatedHuman       string
+	LastUsedHuman      string
+	UsedCount          int
 	AllClients         bool
 	AllowedClientIDs   []int64
 	ClientIDsCSV       string
@@ -520,6 +476,7 @@ func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	list, _ := g.Store.ListUsers(ctx)
 	clients, _ := g.Store.ListClients(ctx)
+	usage, _ := g.Store.UserUsageStats(ctx)
 
 	clientByID := make(map[int64]string, len(clients))
 	for _, c := range clients {
@@ -537,12 +494,18 @@ func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 				names = append(names, n)
 			}
 		}
+		uu := usage[u.ID]
+		lastUsed := "—"
+		if uu.Count > 0 {
+			lastUsed = humanSince(uu.LastUsed)
+		}
 		views = append(views, accessView{
 			ID:                 u.ID,
 			Username:           u.Username,
 			AllowedSourceCIDRs: u.AllowedSourceCIDRs,
 			CIDRsCSV:           strings.Join(u.AllowedSourceCIDRs, ","),
-			CreatedHuman:       u.CreatedAt.Format("2006-01-02"),
+			LastUsedHuman:      lastUsed,
+			UsedCount:          uu.Count,
 			AllClients:         len(ids) == 0,
 			AllowedClientIDs:   ids,
 			ClientIDsCSV:       strings.Join(idStrs, ","),
@@ -555,12 +518,18 @@ func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 		clientOpts = append(clientOpts, clientOption{ID: c.ID, Name: c.Name})
 	}
 
+	proxyHost := g.Cfg.MainDomain
+	if proxyHost == "" {
+		proxyHost = g.Cfg.ProxyDomain
+	}
+
 	g.render(w, r, "access.html", map[string]any{
 		"Title":         "Proxy Access",
 		"Active":        "access",
 		"User":          g.adminName(ctx),
 		"Accesses":      views,
 		"ClientOptions": clientOpts,
+		"ProxyHost":     proxyHost,
 	})
 }
 
@@ -645,7 +614,6 @@ func (g *GUI) postDeleteAccess(w http.ResponseWriter, r *http.Request) {
 type logView struct {
 	ID         int64
 	TSHuman    string
-	SourceIP   string
 	User       string
 	ClientName string
 	Target     string
@@ -695,7 +663,6 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 		views = append(views, logView{
 			ID:         e.ID,
 			TSHuman:    e.TS.Format("15:04:05"),
-			SourceIP:   e.SourceIP,
 			User:       e.Username,
 			ClientName: e.ClientName,
 			Target:     e.TargetHost,
@@ -767,29 +734,57 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 type banView struct {
-	SourceIP     string
+	Origin       string // full opaque origin key (form value)
+	Short        string // display prefix
 	Reason       string
 	FailureCount int
 	ExpiresHuman string
 }
 
+type originStatView struct {
+	Origin       string // full opaque origin key (form value)
+	Short        string // display prefix
+	Total        int
+	Blocked      int
+	LastSeenHuman string
+	Banned       bool
+}
+
 func (g *GUI) getSecurity(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	bans, _ := g.Store.ListBans(ctx, true)
+	banned := make(map[string]bool, len(bans))
 	views := make([]banView, 0, len(bans))
 	for _, b := range bans {
+		banned[b.SourceIP] = true
 		views = append(views, banView{
-			SourceIP:     b.SourceIP,
+			Origin:       b.SourceIP,
+			Short:        server.ShortOrigin(b.SourceIP),
 			Reason:       b.Reason,
 			FailureCount: b.FailureCount,
 			ExpiresHuman: humanUntil(b.BannedUntil),
 		})
 	}
+
+	stats, _ := g.Store.OriginStats(ctx, time.Now().Add(-24*time.Hour), 100)
+	origins := make([]originStatView, 0, len(stats))
+	for _, st := range stats {
+		origins = append(origins, originStatView{
+			Origin:        st.Origin,
+			Short:         server.ShortOrigin(st.Origin),
+			Total:         st.Total,
+			Blocked:       st.Blocked,
+			LastSeenHuman: humanSince(st.LastSeen),
+			Banned:        banned[st.Origin],
+		})
+	}
+
 	allowlist, _ := g.Store.ListAllowedIPs(ctx)
 	g.render(w, r, "security.html", map[string]any{
 		"Title":      "Security",
 		"Active":     "security",
 		"User":       g.adminName(ctx),
+		"Origins":    origins,
 		"ActiveBans": views,
 		"Allowlist":  allowlist,
 	})
@@ -818,7 +813,7 @@ func (g *GUI) postRemoveAllowedIP(w http.ResponseWriter, r *http.Request) {
 
 func (g *GUI) postBan(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
-	ip := strings.TrimSpace(r.Form.Get("ip"))
+	origin := strings.TrimSpace(r.Form.Get("origin"))
 	hours, _ := strconv.Atoi(r.Form.Get("hours"))
 	if hours <= 0 {
 		hours = 24
@@ -827,19 +822,19 @@ func (g *GUI) postBan(w http.ResponseWriter, r *http.Request) {
 	if reason == "" {
 		reason = "manual"
 	}
-	if ip == "" {
-		http.Error(w, "ip required", http.StatusBadRequest)
+	if origin == "" {
+		http.Error(w, "origin required", http.StatusBadRequest)
 		return
 	}
-	_ = g.Store.UpsertBan(r.Context(), ip, time.Now().Add(time.Duration(hours)*time.Hour), reason, 0)
+	_ = g.Store.UpsertBan(r.Context(), origin, time.Now().Add(time.Duration(hours)*time.Hour), reason, 0)
 	http.Redirect(w, r, "/security", http.StatusFound)
 }
 
 func (g *GUI) postUnban(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
-	ip := strings.TrimSpace(r.Form.Get("ip"))
-	if ip != "" {
-		_ = g.Store.UnbanIP(r.Context(), ip)
+	origin := strings.TrimSpace(r.Form.Get("origin"))
+	if origin != "" {
+		_ = g.Store.UnbanIP(r.Context(), origin)
 	}
 	http.Redirect(w, r, "/security", http.StatusFound)
 }

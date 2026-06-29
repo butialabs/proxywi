@@ -63,14 +63,13 @@
         '<td class="text-body-secondary small font-monospace">' + pad2(t.getHours()) + ':' + pad2(t.getMinutes()) + ':' + pad2(t.getSeconds()) + '</td>' +
         '<td>' + outcomeBadge(d.outcome) + '</td>' +
         '<td><span class="badge bg-body-secondary text-body-emphasis">' + escapeHTML(d.protocol) + '</span></td>' +
-        '<td><code>' + escapeHTML(d.source_ip) + '</code></td>' +
         '<td>' + escapeHTML(d.user) + '</td>' +
         '<td>' + escapeHTML(d.client_name) + '</td>' +
         '<td class="text-truncate" style="max-width:320px;"><code>' + escapeHTML(d.target) + '</code></td>' +
         '<td class="text-end font-monospace">' + humanBytes(d.bytes_in || 0) + '</td>' +
         '<td class="text-end font-monospace">' + humanBytes(d.bytes_out || 0) + '</td>' +
         '<td class="text-end font-monospace text-body-secondary">' + (d.duration_ms || 0) + ' ms</td>';
-      tr.style.backgroundColor = 'rgba(74,222,128,.08)';
+      tr.style.backgroundColor = 'rgba(52,211,153,.08)';
       tbody.insertBefore(tr, tbody.firstChild);
       setTimeout(function () {
         tr.style.transition = 'background-color 1.2s';
