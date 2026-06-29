@@ -47,7 +47,7 @@ jobs:
         run: |
           for _ in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 \
-               && curl -fsS -o /dev/null http://127.0.0.1:3000/setup; then
+               && curl -fsS -o /dev/null http://127.0.0.1:3000/login; then
               echo "healthy"; exit 0
             fi
             sleep 3
