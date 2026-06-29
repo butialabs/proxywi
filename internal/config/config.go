@@ -21,9 +21,12 @@ type Server struct {
 }
 
 type Client struct {
-	Server      string
-	Token       string
-	TLSInsecure bool
+	Server          string
+	Token           string
+	TLSInsecure     bool
+	ReportPublicIP  bool
+	AllowedTargets  []string
+	DeniedTargets   []string
 }
 
 func LoadServer() (Server, error) {
@@ -41,9 +44,12 @@ func LoadServer() (Server, error) {
 
 func LoadClient() (Client, error) {
 	c := Client{
-		Server:      os.Getenv("PROXYWI_SERVER"),
-		Token:       os.Getenv("PROXYWI_TOKEN"),
-		TLSInsecure: boolEnv("PROXYWI_TLS_INSECURE"),
+		Server:         os.Getenv("PROXYWI_SERVER"),
+		Token:          os.Getenv("PROXYWI_TOKEN"),
+		TLSInsecure:    boolEnv("PROXYWI_TLS_INSECURE"),
+		ReportPublicIP: boolEnv("PROXYWI_REPORT_PUBLIC_IP"),
+		AllowedTargets: splitEnv(os.Getenv("PROXYWI_ALLOWED_TARGETS")),
+		DeniedTargets:  splitEnv(os.Getenv("PROXYWI_DENIED_TARGETS")),
 	}
 	if c.Server == "" {
 		return c, fmt.Errorf("PROXYWI_SERVER is required")
@@ -55,6 +61,21 @@ func LoadClient() (Client, error) {
 		return c, fmt.Errorf("PROXYWI_SERVER must start with ws:// or wss://")
 	}
 	return c, nil
+}
+
+func splitEnv(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func LoadOrCreateIPHashSecret(dataDir string) ([]byte, error) {

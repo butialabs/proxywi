@@ -35,6 +35,7 @@ func (g *GUI) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimw.Recoverer)
 	r.Use(noIndexHeader)
+	r.Use(securityHeaders)
 
 	r.Get("/robots.txt", robotsTxt)
 	mountStaticAssets(r)
@@ -54,11 +55,13 @@ func (g *GUI) Router() http.Handler {
 		r.Post("/token-logout", g.postTokenLogout)
 		r.Group(func(r chi.Router) {
 			r.Use(g.requireTokenAuth)
+			r.Use(g.requireCSRF)
 			r.Get("/t/logs", g.getTokenLogs)
 		})
 
 		r.Group(func(r chi.Router) {
 			r.Use(g.requireAuth)
+			r.Use(g.requireCSRF)
 			r.Get("/", g.getDashboard)
 			r.Get("/clients", g.getClients)
 			r.Post("/clients/new", g.postNewClient)
@@ -127,6 +130,16 @@ func noIndexHeader(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate, nocache")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';")
+		w.Header().Set("Permissions-Policy", "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()")
 		next.ServeHTTP(w, r)
 	})
 }

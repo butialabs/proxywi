@@ -15,6 +15,17 @@ func (g *GUI) clientByToken(ctx context.Context, token string) (*storage.Client,
 	if token == "" {
 		return nil, nil
 	}
+	tokenID := storage.TokenIDFromToken(token)
+	if tokenID != "" {
+		cl, err := g.Store.ClientByTokenID(ctx, tokenID)
+		if err != nil {
+			return nil, err
+		}
+		if cl != nil && bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
+			return cl, nil
+		}
+	}
+	// Fallback for legacy tokens without token_id.
 	hashes, err := g.Store.AllClientTokenHashes(ctx)
 	if err != nil {
 		return nil, err

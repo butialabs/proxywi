@@ -137,6 +137,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Addr:              cfg.HTTPAddr,
 		Handler:           root,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	guiRouter := guiApp.Router()
@@ -152,6 +155,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Addr:              cfg.MainAddr,
 		Handler:           guiHandler,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	httpLn, err := net.Listen("tcp", cfg.HTTPAddr)

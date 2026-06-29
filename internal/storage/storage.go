@@ -38,7 +38,9 @@ func Open(dataDir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
@@ -99,10 +101,37 @@ func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 	return n, err
 }
 
+var ErrAlreadyConfigured = errors.New("already configured")
+
 func (s *Store) CreateAdmin(ctx context.Context, username, email, passwordHash string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO admins (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)`,
 		username, email, passwordHash, time.Now().Unix())
 	return err
+}
+
+// CreateFirstAdmin creates the first admin atomically. If any admin already
+// exists, it returns ErrAlreadyConfigured.
+func (s *Store) CreateFirstAdmin(ctx context.Context, username, email, passwordHash string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM admins`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrAlreadyConfigured
+	}
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO admins (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)`,
+		username, email, passwordHash, time.Now().Unix())
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListAdmins(ctx context.Context) ([]Admin, error) {
@@ -149,7 +178,7 @@ func (s *Store) UpdateAdmin(ctx context.Context, id int64, newUsername, newEmail
 }
 
 func (s *Store) CreateSession(ctx context.Context, adminID int64, ttl time.Duration) (string, error) {
-	id := randomHex(24)
+	id := randomHex(32)
 	exp := time.Now().Add(ttl).Unix()
 	_, err := s.db.ExecContext(ctx, `INSERT INTO admin_sessions (id, admin_id, expires_at) VALUES (?, ?, ?)`, id, adminID, exp)
 	if err != nil {
@@ -215,14 +244,25 @@ type Client struct {
 	ID        int64
 	Name      string
 	TokenHash string
+	TokenID   string
 	LastSeen  time.Time
 	CreatedAt time.Time
 }
 
-func (s *Store) CreateClient(ctx context.Context, name, tokenHash string) (int64, error) {
+func TokenIDFromToken(token string) string {
+	if len(token) >= 16 {
+		return token[:16]
+	}
+	if token == "" {
+		return ""
+	}
+	return token
+}
+
+func (s *Store) CreateClient(ctx context.Context, name, tokenHash, tokenID string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO clients (name, token_hash, created_at) VALUES (?, ?, ?)`,
-		name, tokenHash, time.Now().Unix())
+		`INSERT INTO clients (name, token_hash, token_id, created_at) VALUES (?, ?, ?, ?)`,
+		name, tokenHash, tokenID, time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -289,7 +329,7 @@ func (s *Store) NormalizeLegacyClientNames(ctx context.Context) error {
 }
 
 func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, token_hash, last_seen_at, created_at FROM clients ORDER BY id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, token_hash, token_id, last_seen_at, created_at FROM clients ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +338,7 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 	for rows.Next() {
 		var c Client
 		var last, created int64
-		if err := rows.Scan(&c.ID, &c.Name, &c.TokenHash, &last, &created); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &last, &created); err != nil {
 			return nil, err
 		}
 		c.LastSeen = time.Unix(last, 0)
@@ -309,10 +349,25 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 }
 
 func (s *Store) ClientByID(ctx context.Context, id int64) (*Client, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, last_seen_at, created_at FROM clients WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, token_id, last_seen_at, created_at FROM clients WHERE id = ?`, id)
 	var c Client
 	var last, created int64
-	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &last, &created); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &last, &created); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	c.LastSeen = time.Unix(last, 0)
+	c.CreatedAt = time.Unix(created, 0)
+	return &c, nil
+}
+
+func (s *Store) ClientByTokenID(ctx context.Context, tokenID string) (*Client, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, token_id, last_seen_at, created_at FROM clients WHERE token_id = ?`, tokenID)
+	var c Client
+	var last, created int64
+	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &last, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -352,8 +407,8 @@ func (s *Store) UpdateClientName(ctx context.Context, id int64, name string) err
 	return err
 }
 
-func (s *Store) UpdateClientToken(ctx context.Context, id int64, tokenHash string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE clients SET token_hash = ? WHERE id = ?`, tokenHash, id)
+func (s *Store) UpdateClientToken(ctx context.Context, id int64, tokenHash, tokenID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE clients SET token_hash = ?, token_id = ? WHERE id = ?`, tokenHash, tokenID, id)
 	return err
 }
 

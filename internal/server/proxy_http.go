@@ -15,6 +15,8 @@ import (
 	"github.com/butialabs/proxywi/internal/tunnel"
 )
 
+const proxyIdleTimeout = 5 * time.Minute
+
 type HTTPProxy struct {
 	Registry *Registry
 	Gate     *AuthGate
@@ -139,7 +141,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		bytesIn, bytesOut = pipe(clientConn, upstream, bytesIn, bytesOut)
+		bytesIn, bytesOut = pipe(clientConn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
 		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "http", "ok",
 			bytesIn, bytesOut, time.Since(start).Milliseconds())
 		return
@@ -254,9 +256,16 @@ func (p *HTTPProxy) logEvent(ctx context.Context,
 	}
 }
 
-func pipe(client net.Conn, upstream net.Conn, inSeed, outSeed int64) (int64, int64) {
+func pipe(client net.Conn, upstream net.Conn, inSeed, outSeed int64, idleTimeout time.Duration) (int64, int64) {
 	inCh := make(chan int64, 1)
 	outCh := make(chan int64, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if idleTimeout > 0 {
+		go refreshDeadlines(ctx, client, upstream, idleTimeout)
+	}
+
 	go func() {
 		n, _ := io.Copy(upstream, client)
 		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
@@ -274,6 +283,25 @@ func pipe(client net.Conn, upstream net.Conn, inSeed, outSeed int64) (int64, int
 	out := <-outCh
 	in := <-inCh
 	return inSeed + in, outSeed + out
+}
+
+func refreshDeadlines(ctx context.Context, a, b net.Conn, idleTimeout time.Duration) {
+	interval := idleTimeout / 2
+	if interval < 5*time.Second {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			dl := time.Now().Add(idleTimeout)
+			_ = a.SetReadDeadline(dl)
+			_ = b.SetReadDeadline(dl)
+		}
+	}
 }
 
 func parseProxyAuth(h string) (user, pass string, ok bool) {

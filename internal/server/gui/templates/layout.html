@@ -60,6 +60,7 @@
         <li><a class="inline-flex items-center gap-1 px-3 py-2 border-b-2 {{if eq .Active "security"}}text-accent border-accent{{else}}border-transparent text-dim hover:text-fg{{end}}" href="/security"><i class="bi bi-shield-lock"></i>{{t "nav.security"}}</a></li>
       </ul>
       <form class="hidden md:flex items-center gap-2 ml-auto" method="post" action="/logout">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
         <select class="bg-soft border border-border-hi px-2 py-1 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/40" onchange="document.cookie='lang='+this.value+';path=/;max-age=31536000';location.reload()">
           {{range .Langs}}<option value="{{.Tag}}" {{if eq .Tag $.Lang}}selected{{end}}>{{.Name}}</option>{{end}}
         </select>
@@ -81,7 +82,10 @@
       <a class="px-2 py-2 {{if eq .Active "access"}}text-accent{{else}}text-dim hover:text-fg{{end}}" href="/access"><i class="bi bi-file-earmark-lock mr-1"></i>{{t "nav.access"}}</a>
       <a class="px-2 py-2 {{if eq .Active "logs"}}text-accent{{else}}text-dim hover:text-fg{{end}}" href="/logs"><i class="bi bi-journal-text mr-1"></i>{{t "nav.logs"}}</a>
       <a class="px-2 py-2 {{if eq .Active "security"}}text-accent{{else}}text-dim hover:text-fg{{end}}" href="/security"><i class="bi bi-shield-lock mr-1"></i>{{t "nav.security"}}</a>
-      <form method="post" action="/logout" class="px-2 py-1"><button class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" type="submit"><i class="bi bi-x-square"></i>{{t "nav.signout"}}</button></form>
+      <form method="post" action="/logout" class="px-2 py-1">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+        <button class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" type="submit"><i class="bi bi-x-square"></i>{{t "nav.signout"}}</button>
+      </form>
     </div>
     {{end}}
   </div>

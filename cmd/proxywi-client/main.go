@@ -34,10 +34,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	serverURL := strings.TrimRight(cfg.Server, "/")
 	agent := &client.Agent{
-		ServerURL:   serverURL,
-		Token:       cfg.Token,
-		TLSInsecure: cfg.TLSInsecure,
-		Log:         log,
+		ServerURL:      serverURL,
+		Token:          cfg.Token,
+		TLSInsecure:    cfg.TLSInsecure,
+		ReportPublicIP: cfg.ReportPublicIP,
+		AllowedTargets: cfg.AllowedTargets,
+		DeniedTargets:  cfg.DeniedTargets,
+		Log:            log,
 	}
 
 	backoff := time.Second

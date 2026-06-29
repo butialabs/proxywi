@@ -5,6 +5,7 @@
     {{if .ClientName}}<span class="text-dim text-sm"><i class="bi bi-hdd-network mr-1"></i>{{.ClientName}}</span>{{end}}
   </div>
   <form method="post" action="/token-logout">
+    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
     <button class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" type="submit"><i class="bi bi-box-arrow-right mr-1"></i>{{t "token_logs.signout"}}</button>
   </form>
 </div>

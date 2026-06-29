@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/butialabs/proxywi/internal/storage"
@@ -31,13 +32,21 @@ func (c *Control) Handler() http.Handler {
 
 func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // agents come from any origin
+		InsecureSkipVerify: true, // host check disabled; origin verified below
 	})
 	if err != nil {
 		c.Log.Warn("ws accept", "err", err)
 		return
 	}
-	ws.SetReadLimit(-1)
+	if origin := r.Header.Get("Origin"); origin != "" {
+		expected := "https://" + r.Host
+		if !strings.EqualFold(origin, expected) && !strings.EqualFold(origin, "http://"+r.Host) {
+			c.Log.Warn("ws origin rejected", "origin", origin, "host", r.Host)
+			_ = ws.Close(websocket.StatusPolicyViolation, "origin not allowed")
+			return
+		}
+	}
+	ws.SetReadLimit(1 << 20) // 1 MiB message limit
 
 	ctx := r.Context()
 
@@ -157,6 +166,17 @@ func (c *Control) readMetaStream(ctx context.Context, agent *Agent) {
 }
 
 func (c *Control) authenticateToken(ctx context.Context, token string) (int64, *storage.Client, error) {
+	tokenID := storage.TokenIDFromToken(token)
+	if tokenID != "" {
+		cl, err := c.Store.ClientByTokenID(ctx, tokenID)
+		if err != nil {
+			return 0, nil, err
+		}
+		if cl != nil && bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
+			return cl.ID, cl, nil
+		}
+	}
+	// Fallback for legacy tokens without token_id.
 	hashes, err := c.Store.AllClientTokenHashes(ctx)
 	if err != nil {
 		return 0, nil, err

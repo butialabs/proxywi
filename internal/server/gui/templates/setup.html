@@ -5,6 +5,7 @@
       <div class="p-4">
         <p class="text-dim">{{t "setup.intro"}}</p>
         <form method="post" action="/setup">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
           <div class="mb-3">
             <label class="block text-sm text-dim mb-1">{{t "setup.username"}}</label>
             <div class="flex">

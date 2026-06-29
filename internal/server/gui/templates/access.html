@@ -50,6 +50,7 @@
                 <i class="bi bi-pencil"></i>
               </button>
               <form method="post" action="/access/{{.ID}}/delete" class="inline" onsubmit="return confirm('{{tp "access.confirm_delete" .}}');">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
                 <button class="inline-flex items-center gap-1 border border-danger/55 text-danger px-2 py-1 text-sm hover:bg-danger/10" title="{{t "access.action_delete"}}"><i class="bi bi-trash"></i></button>
               </form>
             </td>
@@ -66,6 +67,7 @@
   <div x-show="modal" x-cloak @keydown.escape.window="modal=null" class="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 overflow-auto">
     <div class="bg-panel border border-border w-full max-w-lg mt-10" @click.outside="modal=null">
       <form method="post" :action="modal==='edit' ? '/access/'+form.id+'/edit' : '/access/new'">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
         <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium">
           <i class="bi" :class="modal==='edit' ? 'bi-pencil' : 'bi-plus-circle'"></i>
           <span x-text="modal==='edit' ? '{{t "access.edit_modal_title"}}' : '{{t "access.modal_title"}}'"></span>

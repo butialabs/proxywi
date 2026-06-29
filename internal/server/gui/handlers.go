@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -99,8 +100,13 @@ func (g *GUI) postSetup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hash error", http.StatusInternalServerError)
 		return
 	}
-	if err := g.Store.CreateAdmin(r.Context(), username, email, string(hash)); err != nil {
-		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
+	if err := g.Store.CreateFirstAdmin(r.Context(), username, email, string(hash)); err != nil {
+		if errors.Is(err, storage.ErrAlreadyConfigured) {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		g.Log.Error("create first admin", "err", err)
+		http.Error(w, "could not create admin", http.StatusInternalServerError)
 		return
 	}
 	admin, _ := g.Store.AdminByUsername(r.Context(), username)
@@ -354,7 +360,8 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	
-	if tok := r.URL.Query().Get("token"); tok != "" {
+	tok := g.getFlashToken(w, r)
+	if tok != "" {
 		if id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64); err == nil {
 			if c, _ := g.Store.ClientByID(ctx, id); c != nil {
 				data["NewCompose"] = buildCompose(controlURL(r), tok)
@@ -401,12 +408,13 @@ func (g *GUI) postNewClient(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hash error", http.StatusInternalServerError)
 		return
 	}
-	id, err := g.Store.CreateClient(r.Context(), name, string(hash))
+	id, err := g.Store.CreateClient(r.Context(), name, string(hash), storage.TokenIDFromToken(token))
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, fmt.Sprintf("/clients?token=%s&id=%d", token, id), http.StatusFound)
+	g.setFlashToken(w, token)
+	http.Redirect(w, r, fmt.Sprintf("/clients?id=%d", id), http.StatusFound)
 }
 
 func (g *GUI) postRegenerateClient(w http.ResponseWriter, r *http.Request) {
@@ -426,12 +434,13 @@ func (g *GUI) postRegenerateClient(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hash error", http.StatusInternalServerError)
 		return
 	}
-	if err := g.Store.UpdateClientToken(r.Context(), id, string(hash)); err != nil {
+	if err := g.Store.UpdateClientToken(r.Context(), id, string(hash), storage.TokenIDFromToken(token)); err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	g.Registry.Disconnect(id)
-	http.Redirect(w, r, fmt.Sprintf("/clients?token=%s&id=%d", token, id), http.StatusFound)
+	g.setFlashToken(w, token)
+	http.Redirect(w, r, fmt.Sprintf("/clients?id=%d", id), http.StatusFound)
 }
 
 func (g *GUI) getClientCompose(w http.ResponseWriter, r *http.Request) {
@@ -549,7 +558,8 @@ func (g *GUI) postNewAccess(w http.ResponseWriter, r *http.Request) {
 	cidrs := splitCSV(r.Form.Get("cidrs"))
 	clientIDs := parseClientIDs(r.Form["client_ids"])
 	if _, err := g.Store.CreateUser(r.Context(), username, string(hash), cidrs, clientIDs); err != nil {
-		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
+		g.Log.Error("create user", "err", err)
+		http.Error(w, "could not create user", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/access", http.StatusFound)
@@ -577,7 +587,8 @@ func (g *GUI) postEditAccess(w http.ResponseWriter, r *http.Request) {
 		newHash = string(hash)
 	}
 	if err := g.Store.UpdateUser(r.Context(), id, username, newHash, cidrs, true, clientIDs, true); err != nil {
-		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
+		g.Log.Error("update user", "err", err)
+		http.Error(w, "could not update user", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/access", http.StatusFound)
@@ -841,6 +852,10 @@ func (g *GUI) postUnban(w http.ResponseWriter, r *http.Request) {
 
 func (g *GUI) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
 	v := g.view(r)
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["CSRFToken"] = g.ensureCSRF(w, r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := g.tpl.render(w, name, v.tr, v.common(data)); err != nil {
 		g.Log.Error("render", "name", name, "err", err)

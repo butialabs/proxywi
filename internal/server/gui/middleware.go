@@ -15,6 +15,8 @@ const (
 
 const sessionCookie = "proxywi_session"
 const tokenSessionCookie = "proxywi_token_session"
+const flashCookie = "proxywi_flash"
+const csrfCookie = "proxywi_csrf"
 
 func (g *GUI) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +60,8 @@ func (g *GUI) setTokenSession(w http.ResponseWriter, sessionID string) {
 		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
 		Expires:  time.Now().Add(24 * time.Hour),
 	})
 }
@@ -73,11 +76,84 @@ func (g *GUI) setSession(w http.ResponseWriter, sessionID string) {
 		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
 		Expires:  time.Now().Add(24 * time.Hour),
 	})
 }
 
 func (g *GUI) clearSession(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
+}
+
+func (g *GUI) setFlashToken(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     flashCookie,
+		Value:    token,
+		Path:     "/clients",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   60,
+	})
+}
+
+func (g *GUI) getFlashToken(w http.ResponseWriter, r *http.Request) string {
+	c, err := r.Cookie(flashCookie)
+	if err != nil || c.Value == "" {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{Name: flashCookie, Value: "", Path: "/clients", MaxAge: -1})
+	return c.Value
+}
+
+func (g *GUI) ensureCSRF(w http.ResponseWriter, r *http.Request) string {
+	c, err := r.Cookie(csrfCookie)
+	if err == nil && c.Value != "" {
+		return c.Value
+	}
+	token := randHex(16)
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookie,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  time.Now().Add(24 * time.Hour),
+	})
+	return token
+}
+
+func (g *GUI) csrfToken(r *http.Request) string {
+	c, err := r.Cookie(csrfCookie)
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
+func (g *GUI) validateCSRF(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return true
+	}
+	expected := g.csrfToken(r)
+	if expected == "" {
+		return false
+	}
+	_ = r.ParseForm()
+	if r.Form.Get("_csrf") != expected {
+		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func (g *GUI) requireCSRF(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !g.validateCSRF(w, r) {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

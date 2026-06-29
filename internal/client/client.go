@@ -11,7 +11,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,10 +23,16 @@ import (
 )
 
 type Agent struct {
-	ServerURL   string
-	Token       string
-	TLSInsecure bool
-	Log         *slog.Logger
+	ServerURL      string
+	Token          string
+	TLSInsecure    bool
+	ReportPublicIP bool
+	AllowedTargets []string
+	DeniedTargets  []string
+	Log            *slog.Logger
+
+	aclOnce sync.Once
+	acl     targetACL
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -50,9 +58,9 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	defer ws.CloseNow()
 
-	publicIP := lookupPublicIP(dialCtx, a.Log)
-	if publicIP != "" {
-		a.Log.Info("reporting self IP to server", "ip", publicIP)
+	publicIP := ""
+	if a.ReportPublicIP {
+		publicIP = lookupPublicIP(dialCtx, a.Log)
 	}
 	if err := ws.Write(dialCtx, websocket.MessageText, mustJSON(tunnel.Handshake{
 		Version:        tunnel.ProtocolVersion,
@@ -130,6 +138,12 @@ func (a *Agent) handleStream(ctx context.Context, stream net.Conn, c *counters) 
 		return
 	}
 
+	if !a.isTargetAllowed(ctx, req.Target) {
+		a.Log.Warn("target blocked by ACL", "target", req.Target)
+		_ = tunnel.WriteJSONLine(stream, tunnel.ProxyReply{OK: false, Error: "target not allowed"})
+		return
+	}
+
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	target, err := dialer.DialContext(ctx, "tcp", req.Target)
 	if err != nil {
@@ -159,14 +173,20 @@ func (a *Agent) handleStream(ctx context.Context, stream net.Conn, c *counters) 
 	go func() {
 		n, _ := copyCounted(target, stream)
 		c.bytesOut.Add(n)
-		_ = target.(*net.TCPConn).CloseWrite()
+		if cw, ok := target.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
+		}
 		done <- struct{}{}
 	}()
 	go func() {
 		n, _ := copyCounted(stream, target)
 		c.bytesIn.Add(n)
+		if cw, ok := stream.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
+		}
 		done <- struct{}{}
 	}()
+	<-done
 	<-done
 }
 
@@ -205,6 +225,119 @@ func mustJSON(v any) []byte {
 	return b
 }
 
+type targetACL struct {
+	deniedNets  []netip.Prefix
+	allowedNets []netip.Prefix
+	allowedHosts map[string]bool
+	deniedHosts  map[string]bool
+}
+
+var defaultDeniedPrefixes = []string{
+	"127.0.0.0/8",
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"169.254.0.0/16",
+	"224.0.0.0/4",
+	"255.255.255.255/32",
+	"::1/128",
+	"fe80::/10",
+	"ff00::/8",
+}
+
+func (a *Agent) initACL() {
+	a.aclOnce.Do(func() {
+		a.acl.deniedNets = parsePrefixes(append([]string{}, a.DeniedTargets...))
+		if len(a.acl.deniedNets) == 0 {
+			a.acl.deniedNets = parsePrefixes(defaultDeniedPrefixes)
+		}
+		a.acl.allowedNets = parsePrefixes(a.AllowedTargets)
+		a.acl.allowedHosts, a.acl.deniedHosts = parseHosts(a.AllowedTargets), parseHosts(a.DeniedTargets)
+	})
+}
+
+func parsePrefixes(items []string) []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(items))
+	for _, it := range items {
+		it = strings.TrimSpace(it)
+		if it == "" {
+			continue
+		}
+		if p, err := netip.ParsePrefix(it); err == nil {
+			out = append(out, p)
+			continue
+		}
+		if addr, err := netip.ParseAddr(it); err == nil {
+			if p, err := addr.Prefix(addr.BitLen()); err == nil {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+func parseHosts(items []string) map[string]bool {
+	out := make(map[string]bool, len(items))
+	for _, it := range items {
+		it = strings.TrimSpace(it)
+		if it == "" {
+			continue
+		}
+		if _, err := netip.ParsePrefix(it); err == nil {
+			continue
+		}
+		if _, err := netip.ParseAddr(it); err == nil {
+			continue
+		}
+		out[strings.ToLower(it)] = true
+	}
+	return out
+}
+
+func (a *Agent) isTargetAllowed(ctx context.Context, target string) bool {
+	a.initACL()
+	if target == "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(target)
+	if err != nil {
+		host = target
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+
+	// Explicit host allowlist takes precedence.
+	if a.acl.allowedHosts[host] {
+		return true
+	}
+
+	ips, err := net.LookupIPContext(ctx, host)
+	if err != nil {
+		// Cannot resolve: treat as external domain unless explicitly denied.
+		return !a.acl.deniedHosts[host]
+	}
+
+	for _, ip := range ips {
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			continue
+		}
+		for _, p := range a.acl.allowedNets {
+			if p.Contains(addr) {
+				return true
+			}
+		}
+		for _, p := range a.acl.deniedNets {
+			if p.Contains(addr) {
+				if a.acl.allowedHosts[host] {
+					return true
+				}
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func lookupPublicIP(ctx context.Context, log *slog.Logger) string {
 	endpoints := []string{"https://ifconfig.me/ip", "https://icanhazip.com"}
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -215,7 +348,7 @@ func lookupPublicIP(ctx context.Context, log *slog.Logger) string {
 			cancel()
 			continue
 		}
-		req.Header.Set("User-Agent", "curl/proxywi")
+		req.Header.Set("User-Agent", "curl/8.0")
 		resp, err := client.Do(req)
 		cancel()
 		if err != nil {

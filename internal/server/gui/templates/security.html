@@ -29,11 +29,13 @@
           <td class="px-3 py-2 text-right">
             {{if .Banned}}
             <form method="post" action="/security/unban" class="inline">
+              <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
               <input type="hidden" name="origin" value="{{.Origin}}">
               <button class="inline-flex items-center gap-1 border border-accent/55 text-accent px-2 py-1 text-sm hover:bg-accent/10" title="{{t "security.action_unban"}}"><i class="bi bi-unlock mr-1"></i>{{t "security.action_allow"}}</button>
             </form>
             {{else}}
             <form method="post" action="/security/ban" class="inline">
+              <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
               <input type="hidden" name="origin" value="{{.Origin}}">
               <input type="hidden" name="hours" value="24">
               <input type="hidden" name="reason" value="manual">
@@ -76,6 +78,7 @@
           <td class="px-3 py-2 text-dim text-xs">{{.ExpiresHuman}}</td>
           <td class="px-3 py-2 text-right">
             <form method="post" action="/security/unban" class="inline">
+              <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
               <input type="hidden" name="origin" value="{{.Origin}}">
               <button class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" title="{{t "security.action_unban"}}"><i class="bi bi-unlock"></i></button>
             </form>
@@ -111,6 +114,7 @@
           <td class="px-3 py-2">{{.Reason}}</td>
           <td class="px-3 py-2 text-right">
             <form method="post" action="/security/allowlist/remove" class="inline">
+              <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
               <input type="hidden" name="ip" value="{{.IP}}">
               <button class="inline-flex items-center gap-1 border border-danger/55 text-danger px-2 py-1 text-sm hover:bg-danger/10" title="{{t "security.action_remove_allowlist"}}"><i class="bi bi-trash"></i></button>
             </form>
@@ -123,6 +127,7 @@
   </div>
   <div class="bg-soft border-t border-border px-4 py-2">
     <form method="post" action="/security/allowlist/add" class="flex flex-wrap gap-2 items-end">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
       <div class="flex-1"><input class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-full" name="ip" placeholder="{{t "security.field_ip_ph"}}" required></div>
       <div class="flex-1"><input class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-full" name="reason" placeholder="{{t "security.field_reason_ph"}}"></div>
       <div class="w-auto"><button class="inline-flex items-center gap-1 bg-accent text-bg px-3 py-1.5 text-sm font-medium hover:bg-accent-hi"><i class="bi bi-shield-plus mr-1"></i>{{t "security.allowlist_add"}}</button></div>

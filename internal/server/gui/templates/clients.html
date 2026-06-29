@@ -4,6 +4,7 @@
   <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
     <h3 class="text-xl font-semibold">{{t "clients.title"}}</h3>
     <form method="post" action="/clients/new">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
       <button class="inline-flex items-center gap-1 bg-accent text-bg px-3 py-1.5 text-sm font-medium hover:bg-accent-hi"><i class="bi bi-plus-lg"></i>{{t "clients.new"}}</button>
     </form>
   </div>
@@ -45,6 +46,7 @@
                 <i class="bi bi-file-earmark-code"></i>
               </button>
               <form method="post" action="/clients/{{.ID}}/delete" class="inline" onsubmit="return confirm('{{tp "clients.confirm_delete" .}}');">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
                 <button class="inline-flex items-center gap-1 border border-danger/55 text-danger px-2 py-1 text-sm hover:bg-danger/10" title="{{t "clients.action_delete"}}"><i class="bi bi-trash"></i></button>
               </form>
             </td>
@@ -70,6 +72,7 @@
       </div>
       <div class="bg-soft border-t border-border px-4 py-2 flex items-center gap-2">
         <form method="post" :action="regen" class="mr-auto" :data-client-name="title" onsubmit="return confirmRegenerate(this);">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
           <button class="inline-flex items-center gap-1 border border-amber/55 text-amber px-2 py-1 text-sm hover:bg-amber/10"><i class="bi bi-arrow-repeat"></i>{{t "clients.action_regenerate"}}</button>
         </form>
         <button type="button" class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" @click="open=false">{{t "clients.compose_close"}}</button>

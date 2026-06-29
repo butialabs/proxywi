@@ -14,12 +14,15 @@ import (
 	"github.com/butialabs/proxywi/internal/tunnel"
 )
 
+const defaultSOCKSMaxConns = 1000
+
 type SOCKSProxy struct {
 	Registry *Registry
 	Gate     *AuthGate
 	Store    *storage.Store
 	Log      *slog.Logger
 	Hub      *Hub
+	MaxConns int
 }
 
 const (
@@ -43,12 +46,21 @@ const (
 var socksReplyZero = []byte{0, 0, 0, 0, 0, 0}
 
 func (s *SOCKSProxy) Serve(ln net.Listener) error {
+	maxConns := s.MaxConns
+	if maxConns <= 0 {
+		maxConns = defaultSOCKSMaxConns
+	}
+	sem := make(chan struct{}, maxConns)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return err
 		}
-		go s.handle(conn)
+		sem <- struct{}{}
+		go func(c net.Conn) {
+			defer func() { <-sem }()
+			s.handle(c)
+		}(conn)
 	}
 }
 
@@ -151,7 +163,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 		}
 	}
 
-	bytesIn, bytesOut = pipe(conn, upstream, bytesIn, bytesOut)
+	bytesIn, bytesOut = pipe(conn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
 	s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, sourceIP, "socks", "ok",
 		bytesIn, bytesOut, time.Since(start).Milliseconds())
 }

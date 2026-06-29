@@ -1,0 +1,2 @@
+-- SQLite does not support dropping columns directly. A full table recreation
+-- would be required; this migration is intentionally a no-op for safety.

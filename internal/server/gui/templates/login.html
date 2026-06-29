@@ -9,6 +9,7 @@
       <div class="p-4">
         <p class="text-dim text-sm mb-3">{{t "token_login.subtitle"}}</p>
         <form method="post" action="/token-login">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
           <label class="block text-sm text-dim mb-1">{{t "token_login.token"}}</label>
           <div class="flex mb-3">
             <span class="inline-flex items-center px-2 bg-soft border border-border-hi border-r-0 text-dim"><i class="bi bi-key"></i></span>
@@ -25,6 +26,7 @@
       </div>
       <div class="p-4">
         <form method="post" action="/login">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
           <label class="block text-sm text-dim mb-1">{{t "login.username"}}</label>
           <div class="flex mb-3">
             <span class="inline-flex items-center px-2 bg-soft border border-border-hi border-r-0 text-dim"><i class="bi bi-person"></i></span>
