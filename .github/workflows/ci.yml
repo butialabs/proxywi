@@ -24,7 +24,7 @@ jobs:
       - run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
 
@@ -45,7 +45,7 @@ jobs:
 
       - name: Wait for health
         run: |
-          for i in $(seq 1 40); do
+          for _ in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 \
                && curl -fsS -o /dev/null http://127.0.0.1:3000/setup; then
               echo "healthy"; exit 0
