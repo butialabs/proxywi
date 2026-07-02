@@ -210,6 +210,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract semver
+        id: semver
+        run: echo "value=$(echo '${{ github.ref_name }}' | sed 's/^v//;s/-client$//')" >> "$GITHUB_OUTPUT"
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6
@@ -218,6 +222,7 @@ jobs:
           file: docker/client/Dockerfile
           platforms: ${{ matrix.platform }}
           provenance: false
+          build-args: BUILD_VERSION=${{ steps.semver.outputs.value }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-client,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=client-${{ matrix.arch }}
           cache-to:   type=gha,mode=max,scope=client-${{ matrix.arch }}

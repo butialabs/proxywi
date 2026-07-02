@@ -12,9 +12,11 @@ COPY internal/client      ./internal/client
 COPY internal/tunnel      ./internal/tunnel
 COPY internal/version     ./internal/version
 
+ARG BUILD_VERSION=dev
+
 ENV CGO_ENABLED=0
 
-RUN go build -trimpath -ldflags="-s -w" -o /out/proxywi-client ./cmd/proxywi-client
+RUN go build -trimpath -ldflags="-s -w -X github.com/butialabs/proxywi/internal/version.Version=${BUILD_VERSION}" -o /out/proxywi-client ./cmd/proxywi-client
 
 FROM gcr.io/distroless/static:nonroot
 
