@@ -64,6 +64,16 @@ func runMigrations(db *sql.DB) error {
 		return fmt.Errorf("migrator: %w", err)
 	}
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		var dirtyErr migrate.ErrDirty
+		if errors.As(err, &dirtyErr) {
+			if ferr := m.Force(dirtyErr.Version - 1); ferr != nil {
+				return fmt.Errorf("apply migrations: %w (force failed: %v)", err, ferr)
+			}
+			if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+				return fmt.Errorf("apply migrations: %w", err)
+			}
+			return nil
+		}
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil
