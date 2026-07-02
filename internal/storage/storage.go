@@ -63,20 +63,41 @@ func runMigrations(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("migrator: %w", err)
 	}
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		var dirtyErr migrate.ErrDirty
-		if errors.As(err, &dirtyErr) {
-			if ferr := m.Force(dirtyErr.Version - 1); ferr != nil {
-				return fmt.Errorf("apply migrations: %w (force failed: %v)", err, ferr)
-			}
-			if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-				return fmt.Errorf("apply migrations: %w", err)
-			}
-			return nil
+
+	curVer, dirty, verErr := m.Version()
+	if !errors.Is(verErr, migrate.ErrNilVersion) {
+		if verErr != nil {
+			return fmt.Errorf("check migration version: %w", verErr)
 		}
+		floor := migrationFloor(src, curVer)
+		if dirty || floor < curVer {
+			if err := m.Force(int(floor)); err != nil {
+				return fmt.Errorf("force migration: %w", err)
+			}
+		}
+	}
+
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil
+}
+
+func migrationFloor(src interface {
+	First() (uint, error)
+	Next(uint) (uint, error)
+}, target uint) uint {
+	cur, err := src.First()
+	if err != nil || cur > target {
+		return 0
+	}
+	for {
+		next, err := src.Next(cur)
+		if err != nil || next > target {
+			return cur
+		}
+		cur = next
+	}
 }
 
 func (s *Store) Close() error { return s.db.Close() }

@@ -8,7 +8,7 @@ CREATE TABLE clients_new (
     created_at    INTEGER NOT NULL
 );
 INSERT INTO clients_new (id, name, token_hash, token_id, last_seen_at, created_at)
-    SELECT id, name, token_hash, token_id, last_seen_at, created_at FROM clients;
+    SELECT id, name, token_hash, COALESCE(NULLIF(token_id, ''), printf('legacy-%d', id)), last_seen_at, created_at FROM clients;
 DROP TABLE clients;
 ALTER TABLE clients_new RENAME TO clients;
 
