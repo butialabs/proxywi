@@ -103,7 +103,7 @@ func (g *GUI) getTokenLogs(w http.ResponseWriter, r *http.Request) {
 	for _, e := range events {
 		views = append(views, tokenLogView{
 			TSHuman:    e.TS.Format("Jan 02 15:04:05"),
-			Target:     anonymizeTarget(e.TargetHost),
+			Target:     e.TargetHost,
 			Protocol:   e.Protocol,
 			Outcome:    e.Outcome,
 			BytesInH:   humanBytes(e.BytesIn),
@@ -113,7 +113,61 @@ func (g *GUI) getTokenLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	g.render(w, r, "token_logs.html", map[string]any{
 		"Title":      "Logs",
+		"TokenUser":  clientName,
 		"ClientName": clientName,
+		"Active":     "token_logs",
 		"Events":     views,
+	})
+}
+
+type domainStatView struct {
+	Domain        string
+	Requests      int64
+	BytesInH      string
+	BytesOutH     string
+	AvgDurationMS int64
+}
+
+func (g *GUI) getTokenStats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	clientID, _ := ctx.Value(clientIDKey).(int64)
+	if clientID == 0 {
+		http.Redirect(w, r, "/token-login", http.StatusFound)
+		return
+	}
+	client, _ := g.Store.ClientByID(ctx, clientID)
+	clientName := ""
+	if client != nil {
+		clientName = client.Name
+	}
+
+	period := r.URL.Query().Get("period")
+	var since time.Time
+	switch period {
+	case "month":
+		since = time.Now().Add(-30 * 24 * time.Hour)
+	default:
+		period = "week"
+		since = time.Now().Add(-7 * 24 * time.Hour)
+	}
+
+	domainStats, _ := g.Store.DomainStats(ctx, clientID, since)
+	views := make([]domainStatView, 0, len(domainStats))
+	for _, s := range domainStats {
+		views = append(views, domainStatView{
+			Domain:        s.Domain,
+			Requests:      s.Requests,
+			BytesInH:      humanBytes(s.BytesIn),
+			BytesOutH:     humanBytes(s.BytesOut),
+			AvgDurationMS: s.AvgDurationMS,
+		})
+	}
+	g.render(w, r, "token_stats.html", map[string]any{
+		"Title":      "Stats",
+		"TokenUser":  clientName,
+		"ClientName": clientName,
+		"Active":     "token_stats",
+		"Stats":      views,
+		"Period":     period,
 	})
 }

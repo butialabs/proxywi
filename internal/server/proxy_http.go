@@ -18,11 +18,12 @@ import (
 const proxyIdleTimeout = 5 * time.Minute
 
 type HTTPProxy struct {
-	Registry *Registry
-	Gate     *AuthGate
-	Store    *storage.Store
-	Log      *slog.Logger
-	Hub      *Hub
+	Registry  *Registry
+	Gate      *AuthGate
+	Store     *storage.Store
+	Log       *slog.Logger
+	Hub       *Hub
+	Blocklist *Blocklist
 }
 
 func IsProxyRequest(r *http.Request) bool {
@@ -74,6 +75,18 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			target += ":443"
 		} else {
 			target += ":80"
+		}
+	}
+
+	if p.Blocklist != nil {
+		host, _, _ := net.SplitHostPort(target)
+		if host == "" {
+			host = target
+		}
+		if p.Blocklist.IsBlocked(host) {
+			http.Error(w, "Blocked by content policy", http.StatusForbidden)
+			p.logEvent(ctx, u.ID, u.Username, 0, "", target, "http", "denied", "blocklist", 0, 0, 0)
+			return
 		}
 	}
 

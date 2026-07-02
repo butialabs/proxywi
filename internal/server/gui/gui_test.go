@@ -9,25 +9,6 @@ import (
 	"github.com/butialabs/proxywi/internal/storage"
 )
 
-func TestAnonymizeTarget(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"", ""},
-		{"google.com:443", "goo***.*om:443"},
-		{"api.example.com:80", "*pi.exa****.*om:80"},
-		{"a.b", "*.*"},
-		{"localhost", "loc******"},
-		{"[::1]:443", "[****]:443"},
-		{"192.168.1.1:443", "*92.*68.*.*:443"},
-	}
-	for _, c := range cases {
-		got := anonymizeTarget(c.in)
-		if got != c.want {
-			t.Errorf("anonymizeTarget(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
 
 func TestAuthRateLimit_AllowsThenBlocks(t *testing.T) {
 	dir := t.TempDir()

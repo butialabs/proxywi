@@ -3,18 +3,23 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Server struct {
-	HTTPAddr      string
-	SOCKSAddr     string
-	MainAddr      string
-	MainDomain    string
-	DataDir       string
-	ProxyProtocol bool
-	AdminUsername string
-	AdminPassword string
+	HTTPAddr        string
+	SOCKSAddr       string
+	MainAddr        string
+	MainDomain      string
+	DataDir         string
+	ProxyProtocol   bool
+	AdminUsername   string
+	AdminPassword   string
+	RateLimitMax    int
+	RateLimitWindow time.Duration
+	BlockCategories []string
 }
 
 type Client struct {
@@ -27,17 +32,21 @@ type Client struct {
 
 func LoadServer() (Server, error) {
 	s := Server{
-		HTTPAddr:      ":" + env("PROXYWI_PROXY_HTTP_PORT", "8080"),
-		SOCKSAddr:     ":" + env("PROXYWI_PROXY_SOCKET_PORT", "1080"),
-		MainAddr:      ":" + env("PROXYWI_PORT", "3000"),
-		MainDomain:    env("PROXYWI_DOMAIN", ""),
-		DataDir:       env("PROXYWI_DATA_DIR", "./data"),
-		ProxyProtocol: boolEnv("PROXYWI_PROXY_PROTOCOL"),
-		AdminUsername: os.Getenv("ADMIN_USERNAME"),
-		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
+		HTTPAddr:        ":" + env("PROXYWI_PROXY_HTTP_PORT", "8080"),
+		SOCKSAddr:       ":" + env("PROXYWI_PROXY_SOCKET_PORT", "1080"),
+		MainAddr:        ":" + env("PROXYWI_PORT", "3000"),
+		MainDomain:      env("PROXYWI_DOMAIN", ""),
+		DataDir:         env("PROXYWI_DATA_DIR", "./data"),
+		ProxyProtocol:   boolEnv("PROXYWI_PROXY_PROTOCOL"),
+		AdminUsername:   os.Getenv("ADMIN_USERNAME"),
+		AdminPassword:   os.Getenv("ADMIN_PASSWORD"),
+		RateLimitMax:    intEnv("PROXYWI_RATE_LIMIT_MAX", 5),
+		RateLimitWindow: durationEnv("PROXYWI_RATE_LIMIT_WINDOW", time.Second),
+		BlockCategories: splitEnv(os.Getenv("PROXYWI_BLOCK_CATEGORIES")),
 	}
 	return s, nil
 }
+
 
 func LoadClient() (Client, error) {
 	c := Client{
@@ -87,4 +96,22 @@ func boolEnv(key string) bool {
 		return true
 	}
 	return false
+}
+
+func intEnv(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+func durationEnv(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
 }

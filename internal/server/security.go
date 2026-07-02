@@ -16,13 +16,21 @@ func init() {
 }
 
 type AuthGate struct {
-	Store   *storage.Store
-	Log     *slog.Logger
-	Limiter *RateLimiter
+	Store           *storage.Store
+	Log             *slog.Logger
+	Limiter         *RateLimiter
+	RateLimitMax    int
+	RateLimitWindow time.Duration
 }
 
-func DefaultAuthGate(store *storage.Store, log *slog.Logger) *AuthGate {
-	return &AuthGate{Store: store, Log: log, Limiter: NewRateLimiter()}
+func DefaultAuthGate(store *storage.Store, log *slog.Logger, max int, window time.Duration) *AuthGate {
+	return &AuthGate{
+		Store:           store,
+		Log:             log,
+		Limiter:         NewRateLimiter(),
+		RateLimitMax:    max,
+		RateLimitWindow: window,
+	}
 }
 
 func (g *AuthGate) VerifyCredentials(ctx context.Context, username, password string) (*storage.User, bool) {
@@ -44,7 +52,7 @@ func (g *AuthGate) AllowProxyRequest(user string) bool {
 	if g.Limiter == nil {
 		return true
 	}
-	return g.Limiter.Allow("proxy:"+user, 5, time.Second)
+	return g.Limiter.Allow("proxy:"+user, g.RateLimitMax, g.RateLimitWindow)
 }
 
 type authError string

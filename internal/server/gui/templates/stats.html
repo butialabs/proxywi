@@ -1,0 +1,40 @@
+{{define "content"}}
+<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+  <h3 class="text-xl font-semibold">{{t "stats.title"}}</h3>
+</div>
+
+<div class="flex gap-2 mb-4">
+  <a href="/stats?period=week" class="px-3 py-1 text-sm border border-border-hi {{if eq .Period "week"}}bg-accent text-bg{{else}}text-dim hover:text-fg hover:bg-white/5{{end}}">{{t "token_stats.period_week"}}</a>
+  <a href="/stats?period=month" class="px-3 py-1 text-sm border border-border-hi {{if eq .Period "month"}}bg-accent text-bg{{else}}text-dim hover:text-fg hover:bg-white/5{{end}}">{{t "token_stats.period_month"}}</a>
+</div>
+
+<div class="bg-panel border border-border">
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-soft">
+        <tr class="text-dim text-xs uppercase">
+          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_domain"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_requests"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_in"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_out"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_avg_duration"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Stats}}
+        <tr class="border-b border-border hover:bg-accent/5">
+          <td class="px-3 py-2 truncate max-w-[360px]"><code class="font-mono text-accent-hi">{{.Domain}}</code></td>
+          <td class="px-3 py-2 text-right font-mono">{{.Requests}}</td>
+          <td class="px-3 py-2 text-right font-mono">{{.BytesInH}}</td>
+          <td class="px-3 py-2 text-right font-mono">{{.BytesOutH}}</td>
+          <td class="px-3 py-2 text-right font-mono text-dim">{{.AvgDurationMS}} ms</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="5" class="text-center text-dim p-4"><i class="bi bi-inbox text-3xl block mb-2 opacity-50"></i>{{t "token_stats.empty"}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}
+{{template "layout" .}}

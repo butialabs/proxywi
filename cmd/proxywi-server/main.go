@@ -101,7 +101,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	reg := server.NewRegistry()
-	gate := server.DefaultAuthGate(store, log)
+	gate := server.DefaultAuthGate(store, log, cfg.RateLimitMax, cfg.RateLimitWindow)
 	hub := server.NewHub()
 
 	control := &server.Control{
@@ -118,11 +118,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		},
 	}
 
+	bl := server.NewBlocklist()
+
 	httpProxy := &server.HTTPProxy{
-		Registry: reg, Gate: gate, Store: store, Log: log, Hub: hub,
+		Registry: reg, Gate: gate, Store: store, Log: log, Hub: hub, Blocklist: bl,
 	}
 	socksProxy := &server.SOCKSProxy{
-		Registry: reg, Gate: gate, Store: store, Log: log, Hub: hub,
+		Registry: reg, Gate: gate, Store: store, Log: log, Hub: hub, Blocklist: bl,
 	}
 
 	guiApp, err := gui.New(store, reg, hub, cfg, log)
@@ -213,6 +215,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	wg.Add(1)
 	go func() { defer wg.Done(); runRetentionSweep(ctx, store, log) }()
 
+	wg.Add(1)
+	go func() { defer wg.Done(); runBlocklistRefresh(ctx, cfg, store, bl, log) }()
+
 	log.Info("proxywi server up",
 		"http", cfg.HTTPAddr, "socks", cfg.SOCKSAddr, "main", cfg.MainAddr,
 		"main_domain", cfg.MainDomain,
@@ -251,6 +256,65 @@ func serveListener(srv *http.Server, ln net.Listener, log *slog.Logger, role str
 		return nil
 	}
 	return err
+}
+
+func runBlocklistRefresh(ctx context.Context, cfg config.Server, store *storage.Store, bl *server.Blocklist, log *slog.Logger) {
+	if len(cfg.BlockCategories) == 0 {
+		return
+	}
+
+	if existing, err := store.LoadBlockedDomains(ctx); err == nil && len(existing) > 0 {
+		bl.Replace(existing)
+		log.Info("blocklist loaded from DB", "domains", len(existing))
+	}
+
+	refresh := func() {
+		for _, cat := range cfg.BlockCategories {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			url := server.DefaultBlocklistURLs[cat]
+			if url == "" {
+				log.Warn("no blocklist URL configured", "category", cat)
+				continue
+			}
+			fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			domains, err := server.FetchDomains(fetchCtx, url)
+			cancel()
+			if err != nil {
+				log.Warn("blocklist fetch failed", "category", cat, "err", err)
+				continue
+			}
+			if err := store.DeleteBlockedDomainsByCategory(ctx, cat); err != nil {
+				log.Warn("blocklist clear failed", "category", cat, "err", err)
+				continue
+			}
+			if err := store.UpsertBlockedDomains(ctx, domains, cat); err != nil {
+				log.Warn("blocklist upsert failed", "category", cat, "err", err)
+				continue
+			}
+			log.Info("blocklist updated", "category", cat, "domains", len(domains))
+		}
+		if loaded, err := store.LoadBlockedDomains(ctx); err == nil {
+			bl.Replace(loaded)
+			log.Info("blocklist active", "domains", len(loaded))
+		}
+	}
+
+	refresh()
+
+	ticker := time.NewTicker(7 * 24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
 }
 
 func runRetentionSweep(ctx context.Context, store *storage.Store, log *slog.Logger) {

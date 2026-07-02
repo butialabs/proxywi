@@ -805,6 +805,145 @@ func (s *Store) PurgeProxyEventsOlderThan(ctx context.Context, cutoff time.Time)
 	return n, nil
 }
 
+type DomainStat struct {
+	Domain        string
+	Requests      int64
+	BytesIn       int64
+	BytesOut      int64
+	AvgDurationMS int64
+}
+
+// DomainStats returns per-domain aggregates. clientID=0 returns all clients.
+func (s *Store) DomainStats(ctx context.Context, clientID int64, since time.Time) ([]DomainStat, error) {
+	var rows *sql.Rows
+	var err error
+	if clientID == 0 {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT target_host, COUNT(*) AS cnt, SUM(bytes_in), SUM(bytes_out), CAST(AVG(duration_ms) AS INTEGER)
+			 FROM proxy_events
+			 WHERE ts >= ? AND outcome = 'ok'
+			 GROUP BY target_host
+			 ORDER BY cnt DESC
+			 LIMIT 200`,
+			since.Unix())
+	} else {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT target_host, COUNT(*) AS cnt, SUM(bytes_in), SUM(bytes_out), CAST(AVG(duration_ms) AS INTEGER)
+			 FROM proxy_events
+			 WHERE client_id = ? AND ts >= ? AND outcome = 'ok'
+			 GROUP BY target_host
+			 ORDER BY cnt DESC
+			 LIMIT 200`,
+			clientID, since.Unix())
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	type entry struct {
+		requests      int64
+		bytesIn       int64
+		bytesOut      int64
+		totalDuration int64
+	}
+	byDomain := map[string]*entry{}
+	var order []string
+	for rows.Next() {
+		var host string
+		var cnt, bIn, bOut, avgDur int64
+		if err := rows.Scan(&host, &cnt, &bIn, &bOut, &avgDur); err != nil {
+			return nil, err
+		}
+		domain := host
+		if i := strings.LastIndex(host, ":"); i > 0 {
+			domain = host[:i]
+		}
+		if _, ok := byDomain[domain]; !ok {
+			byDomain[domain] = &entry{}
+			order = append(order, domain)
+		}
+		e := byDomain[domain]
+		e.totalDuration += avgDur * cnt
+		e.requests += cnt
+		e.bytesIn += bIn
+		e.bytesOut += bOut
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]DomainStat, 0, len(order))
+	for _, domain := range order {
+		e := byDomain[domain]
+		avg := int64(0)
+		if e.requests > 0 {
+			avg = e.totalDuration / e.requests
+		}
+		out = append(out, DomainStat{
+			Domain:        domain,
+			Requests:      e.requests,
+			BytesIn:       e.bytesIn,
+			BytesOut:      e.bytesOut,
+			AvgDurationMS: avg,
+		})
+	}
+	return out, nil
+}
+
+func (s *Store) UpsertBlockedDomains(ctx context.Context, domains []string, category string) error {
+	const chunkSize = 1000
+	for i := 0; i < len(domains); i += chunkSize {
+		end := i + chunkSize
+		if end > len(domains) {
+			end = len(domains)
+		}
+		chunk := domains[i:end]
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO blocked_domains (domain, category) VALUES (?, ?)`)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		for _, domain := range chunk {
+			if _, err := stmt.ExecContext(ctx, domain, category); err != nil {
+				_ = stmt.Close()
+				_ = tx.Rollback()
+				return err
+			}
+		}
+		_ = stmt.Close()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) DeleteBlockedDomainsByCategory(ctx context.Context, category string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM blocked_domains WHERE category = ?`, category)
+	return err
+}
+
+func (s *Store) LoadBlockedDomains(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT domain FROM blocked_domains`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out[d] = true
+	}
+	return out, rows.Err()
+}
+
 func placeholders(n int) string {
 	if n <= 0 {
 		return ""

@@ -17,12 +17,13 @@ import (
 const defaultSOCKSMaxConns = 1000
 
 type SOCKSProxy struct {
-	Registry *Registry
-	Gate     *AuthGate
-	Store    *storage.Store
-	Log      *slog.Logger
-	Hub      *Hub
-	MaxConns int
+	Registry  *Registry
+	Gate      *AuthGate
+	Store     *storage.Store
+	Log       *slog.Logger
+	Hub       *Hub
+	Blocklist *Blocklist
+	MaxConns  int
 }
 
 const (
@@ -106,6 +107,18 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	target, ok := readRequest(br, conn)
 	if !ok {
 		return
+	}
+
+	if s.Blocklist != nil {
+		host, _, _ := net.SplitHostPort(target)
+		if host == "" {
+			host = target
+		}
+		if s.Blocklist.IsBlocked(host) {
+			_, _ = conn.Write(socksReply(socksRepHostUnreac))
+			s.logEvent(ctx, u.ID, u.Username, 0, "", target, "socks", "denied", "blocklist", 0, 0, 0)
+			return
+		}
 	}
 
 	agent, err := s.Registry.PickNext()

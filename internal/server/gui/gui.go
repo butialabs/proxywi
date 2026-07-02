@@ -59,6 +59,7 @@ func (g *GUI) Router() http.Handler {
 			r.Use(g.requireTokenAuth)
 			r.Use(g.requireCSRF)
 			r.Get("/t/logs", g.getTokenLogs)
+			r.Get("/t/stats", g.getTokenStats)
 		})
 
 		r.Group(func(r chi.Router) {
@@ -75,6 +76,7 @@ func (g *GUI) Router() http.Handler {
 			r.Post("/access/{id}/edit", g.postEditAccess)
 			r.Post("/access/{id}/delete", g.postDeleteAccess)
 			r.Get("/logs", g.getLogs)
+			r.Get("/stats", g.getGlobalStats)
 			r.Get("/events/dashboard", g.eventsDashboard)
 			r.Get("/events/logs", g.eventsLogs)
 		})

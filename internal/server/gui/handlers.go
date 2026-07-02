@@ -471,52 +471,38 @@ func outcomeTitle(outcome, reason string) string {
 
 const logsPageSize = 20
 
-func anonymizeTarget(target string) string {
-	if target == "" {
-		return ""
+func (g *GUI) getGlobalStats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	period := r.URL.Query().Get("period")
+	var since time.Time
+	switch period {
+	case "month":
+		since = time.Now().Add(-30 * 24 * time.Hour)
+	default:
+		period = "week"
+		since = time.Now().Add(-7 * 24 * time.Hour)
 	}
-	host, port, hasPort := splitTargetHostPort(target)
-	if strings.HasPrefix(host, "[") {
-		out := "[****]"
-		if hasPort {
-			out += ":" + port
-		}
-		return out
+
+	domainStats, _ := g.Store.DomainStats(ctx, 0, since)
+	views := make([]domainStatView, 0, len(domainStats))
+	for _, s := range domainStats {
+		views = append(views, domainStatView{
+			Domain:        s.Domain,
+			Requests:      s.Requests,
+			BytesInH:      humanBytes(s.BytesIn),
+			BytesOutH:     humanBytes(s.BytesOut),
+			AvgDurationMS: s.AvgDurationMS,
+		})
 	}
-	labels := strings.Split(host, ".")
-	for i, l := range labels {
-		n := len(l)
-		switch {
-		case n <= 2:
-			labels[i] = strings.Repeat("*", n)
-		case n == 3:
-			labels[i] = "*" + l[n-2:]
-		default:
-			labels[i] = l[:3] + strings.Repeat("*", n-3)
-		}
-	}
-	out := strings.Join(labels, ".")
-	if hasPort {
-		out += ":" + port
-	}
-	return out
+	g.render(w, r, "stats.html", map[string]any{
+		"Title":  "Stats",
+		"Active": "stats",
+		"User":   g.adminName(ctx),
+		"Stats":  views,
+		"Period": period,
+	})
 }
 
-func splitTargetHostPort(target string) (host, port string, hasPort bool) {
-	if strings.HasPrefix(target, "[") {
-		if i := strings.LastIndex(target, "]:"); i > 0 {
-			return target[:i+1], target[i+2:], true
-		}
-		return target, "", false
-	}
-	if i := strings.LastIndex(target, ":"); i > 0 {
-		portStr := target[i+1:]
-		if _, err := strconv.Atoi(portStr); err == nil {
-			return target[:i], portStr, true
-		}
-	}
-	return target, "", false
-}
 
 func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -557,7 +543,7 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 			TSHuman:      e.TS.Format("15:04:05"),
 			User:         e.Username,
 			ClientName:   e.ClientName,
-			Target:       anonymizeTarget(e.TargetHost),
+			Target:       e.TargetHost,
 			Protocol:     e.Protocol,
 			Outcome:      e.Outcome,
 			OutcomeTitle: outcomeTitle(e.Outcome, e.OutcomeReason),

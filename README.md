@@ -107,6 +107,9 @@ Run it 10 times in a loop: each call exits through a different agent.
 | `PROXYWI_DATA_DIR`          | `./data`       | Where SQLite data lives |
 | `ADMIN_USERNAME`            | *required*     | Initial administrator username. Created on first start if no admin exists. |
 | `ADMIN_PASSWORD`            | *required*     | Initial administrator password (min. 8 characters). |
+| `PROXYWI_RATE_LIMIT_MAX`    | `5`            | Max proxy requests per user per window. |
+| `PROXYWI_RATE_LIMIT_WINDOW` | `1s`           | Rate-limit window duration (`500ms`, `2s`, `1m`, etc.). |
+| `PROXYWI_BLOCK_CATEGORIES`  | *(unset)*      | Comma-separated list of domain categories to block on all proxy connections. Supported values: `adult`, `gambling`, `crypto`. Lists are downloaded from public blocklists on startup and refreshed weekly. Example: `adult,gambling`. |
 
 > The image ships with the proxy listeners on internal ports and `PROXYWI_PROXY_PROTOCOL=true`; you normally only set `PROXYWI_DOMAIN` and `ACME_EMAIL`. Published ports: **443** (GUI/wss), **8443** (HTTPS proxy), **1080** (SOCKS5), **80** (ACME).
 
