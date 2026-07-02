@@ -100,8 +100,7 @@ Run it 10 times in a loop: each call exits through a different agent.
 |-----------------------------|----------------|---------|
 | `PROXYWI_DOMAIN`            | *required*     | Public host. Used by the bundled Caddy for automatic HTTPS and by the GUI. Set this in `.env`. |
 | `ACME_EMAIL`               | *required*      | Let's Encrypt contact for the bundled Caddy. Set this in `.env`. |
-| `PROXYWI_MAIN_DOMAIN`       | `proxywi.xyz`  | Host the GUI/control plane reports (set it to `PROXYWI_DOMAIN`) |
-| `PROXYWI_MAIN_PORT`         | `3000`         | Admin GUI + WS control plane listener (internal; Caddy publishes `443`) |
+| `PROXYWI_PORT`              | `3000`         | Admin GUI + WS control plane listener (internal; Caddy publishes `443`) |
 | `PROXYWI_PROXY_HTTP_PORT`   | `8080`         | HTTP forward-proxy listener (internal; Caddy publishes `8443` over TLS) |
 | `PROXYWI_PROXY_SOCKET_PORT` | `11080`        | SOCKS5 listener (internal; Caddy publishes `1080`) |
 | `PROXYWI_PROXY_PROTOCOL`    | `true`         | Accept the PROXY protocol on the proxy listeners so the real client IP survives the bundled Caddy. Only enable behind a trusted L4 terminator. |
@@ -115,7 +114,7 @@ Run it 10 times in a loop: each call exits through a different agent.
 
 | Variable                | Default    | Purpose |
 |-------------------------|------------|---------|
-| `PROXYWI_SERVER`        | *required* | e.g. `ws://proxywi.xyz:3000` or `wss://proxywi.xyz` when a TLS-terminating reverse proxy is in front. Points at `PROXYWI_MAIN_DOMAIN`, not the proxy domain. |
+| `PROXYWI_SERVER`        | *required* | e.g. `ws://proxywi.xyz:3000` or `wss://proxywi.xyz` when a TLS-terminating reverse proxy is in front. Points at `PROXYWI_DOMAIN`. |
 | `PROXYWI_TOKEN`         | *required* | Token from the GUI, shown once at enrollment. This is the only credential the agent needs. |
 | `PROXYWI_TLS_INSECURE`  | `false`    | Skip TLS verification when dialing the control plane over `wss://` behind a self-signed reverse proxy. |
 

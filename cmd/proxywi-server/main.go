@@ -215,7 +215,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	log.Info("proxywi server up",
 		"http", cfg.HTTPAddr, "socks", cfg.SOCKSAddr, "main", cfg.MainAddr,
-		"main_domain", cfg.MainDomain, "proxy_domain", cfg.ProxyDomain,
+		"main_domain", cfg.MainDomain,
 		"retention_days", int(retentionWindow/(24*time.Hour)))
 
 	select {

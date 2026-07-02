@@ -26,7 +26,7 @@ RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh && mkdir -p /data
 ENV PROXYWI_DATA_DIR=/data \
     XDG_DATA_HOME=/data \
     XDG_CONFIG_HOME=/config \
-    PROXYWI_MAIN_PORT=3000 \
+    PROXYWI_PORT=3000 \
     PROXYWI_PROXY_HTTP_PORT=8080 \
     PROXYWI_PROXY_SOCKET_PORT=11080 \
     PROXYWI_PROXY_PROTOCOL=true

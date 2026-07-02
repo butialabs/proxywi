@@ -357,9 +357,6 @@ func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxyHost := g.Cfg.MainDomain
-	if proxyHost == "" {
-		proxyHost = g.Cfg.ProxyDomain
-	}
 
 	g.render(w, r, "access.html", map[string]any{
 		"Title":     "Proxy Access",

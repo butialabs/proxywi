@@ -11,7 +11,6 @@ type Server struct {
 	SOCKSAddr     string
 	MainAddr      string
 	MainDomain    string
-	ProxyDomain   string
 	DataDir       string
 	ProxyProtocol bool
 	AdminUsername string
@@ -30,9 +29,8 @@ func LoadServer() (Server, error) {
 	s := Server{
 		HTTPAddr:      ":" + env("PROXYWI_PROXY_HTTP_PORT", "8080"),
 		SOCKSAddr:     ":" + env("PROXYWI_PROXY_SOCKET_PORT", "1080"),
-		MainAddr:      ":" + env("PROXYWI_MAIN_PORT", "3000"),
-		MainDomain:    env("PROXYWI_MAIN_DOMAIN", "proxywi.xyz"),
-		ProxyDomain:   env("PROXYWI_PROXY_DOMAIN", "pomar.proxywi.xyz"),
+		MainAddr:      ":" + env("PROXYWI_PORT", "3000"),
+		MainDomain:    env("PROXYWI_DOMAIN", ""),
 		DataDir:       env("PROXYWI_DATA_DIR", "./data"),
 		ProxyProtocol: boolEnv("PROXYWI_PROXY_PROTOCOL"),
 		AdminUsername: os.Getenv("ADMIN_USERNAME"),
