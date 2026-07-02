@@ -136,6 +136,34 @@ func TestPurgeOldData_DoesNotDependOnDroppedTables(t *testing.T) {
 	}
 }
 
+func TestInsertProxyEvent_OutcomeReason(t *testing.T) {
+	s, cleanup := openTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	ev := ProxyEvent{
+		TargetHost:    "example.com:443",
+		Protocol:      "http",
+		Outcome:       "denied",
+		OutcomeReason: "auth",
+	}
+	_, err := s.InsertProxyEvent(ctx, ev)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	events, err := s.ListProxyEvents(ctx, time.Unix(0, 0), 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].OutcomeReason != "auth" {
+		t.Fatalf("expected reason %q, got %q", "auth", events[0].OutcomeReason)
+	}
+}
+
 func TestMain(m *testing.M) {
 	code := m.Run()
 	os.Exit(code)

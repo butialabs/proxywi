@@ -426,16 +426,47 @@ func (g *GUI) postDeleteAccess(w http.ResponseWriter, r *http.Request) {
 }
 
 type logView struct {
-	ID         int64
-	TSHuman    string
-	User       string
-	ClientName string
-	Target     string
-	Protocol   string
-	Outcome    string
-	BytesInH   string
-	BytesOutH  string
-	DurationMS int64
+	ID           int64
+	TSHuman      string
+	User         string
+	ClientName   string
+	Target       string
+	Protocol     string
+	Outcome      string
+	OutcomeTitle string
+	BytesInH     string
+	BytesOutH    string
+	DurationMS   int64
+}
+
+func outcomeTitle(outcome, reason string) string {
+	switch outcome + ":" + reason {
+	case "denied:auth":
+		return "log.reason.denied.auth"
+	case "denied:ratelimit":
+		return "log.reason.denied.ratelimit"
+	case "failed:no_agent":
+		return "log.reason.failed.no_agent"
+	case "failed:dial":
+		return "log.reason.failed.dial"
+	case "failed:reply":
+		return "log.reason.failed.reply"
+	case "failed:upstream":
+		return "log.reason.failed.upstream"
+	case "failed:hijack":
+		return "log.reason.failed.hijack"
+	case "failed:write":
+		return "log.reason.failed.write"
+	default:
+		switch outcome {
+		case "ok":
+			return ""
+		case "denied":
+			return "log.reason.denied"
+		default:
+			return "log.reason.failed"
+		}
+	}
 }
 
 const logsPageSize = 20
@@ -522,16 +553,17 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 	views := make([]logView, 0, len(events))
 	for _, e := range events {
 		views = append(views, logView{
-			ID:         e.ID,
-			TSHuman:    e.TS.Format("15:04:05"),
-			User:       e.Username,
-			ClientName: e.ClientName,
-			Target:     anonymizeTarget(e.TargetHost),
-			Protocol:   e.Protocol,
-			Outcome:    e.Outcome,
-			BytesInH:   humanBytes(e.BytesIn),
-			BytesOutH:  humanBytes(e.BytesOut),
-			DurationMS: e.DurationMS,
+			ID:           e.ID,
+			TSHuman:      e.TS.Format("15:04:05"),
+			User:         e.Username,
+			ClientName:   e.ClientName,
+			Target:       anonymizeTarget(e.TargetHost),
+			Protocol:     e.Protocol,
+			Outcome:      e.Outcome,
+			OutcomeTitle: outcomeTitle(e.Outcome, e.OutcomeReason),
+			BytesInH:     humanBytes(e.BytesIn),
+			BytesOutH:    humanBytes(e.BytesOut),
+			DurationMS:   e.DurationMS,
 		})
 	}
 	clients, _ := g.Store.ListClients(ctx)

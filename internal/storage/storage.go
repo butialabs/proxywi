@@ -667,18 +667,19 @@ func (s *Store) PurgeOldData(ctx context.Context, cutoff time.Time) (int64, erro
 }
 
 type ProxyEvent struct {
-	ID          int64
-	TS          time.Time
-	UserID      int64
-	Username    string
-	ClientID    int64
-	ClientName  string
-	TargetHost  string
-	Protocol    string
-	Outcome     string
-	BytesIn     int64
-	BytesOut    int64
-	DurationMS  int64
+	ID            int64
+	TS            time.Time
+	UserID        int64
+	Username      string
+	ClientID      int64
+	ClientName    string
+	TargetHost    string
+	Protocol      string
+	Outcome       string
+	OutcomeReason string
+	BytesIn       int64
+	BytesOut      int64
+	DurationMS    int64
 }
 
 func (s *Store) InsertProxyEvent(ctx context.Context, ev ProxyEvent) (int64, error) {
@@ -697,9 +698,9 @@ func (s *Store) InsertProxyEvent(ctx context.Context, ev ProxyEvent) (int64, err
 		ts = time.Now()
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO proxy_events (ts, user_id, client_id, target_host, protocol, outcome, bytes_in, bytes_out, duration_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ts.Unix(), userPtr, clientPtr, ev.TargetHost, ev.Protocol, ev.Outcome, ev.BytesIn, ev.BytesOut, ev.DurationMS)
+		`INSERT INTO proxy_events (ts, user_id, client_id, target_host, protocol, outcome, outcome_reason, bytes_in, bytes_out, duration_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ts.Unix(), userPtr, clientPtr, ev.TargetHost, ev.Protocol, ev.Outcome, ev.OutcomeReason, ev.BytesIn, ev.BytesOut, ev.DurationMS)
 	if err != nil {
 		return 0, err
 	}
@@ -767,7 +768,7 @@ func (s *Store) ListProxyEventsFiltered(ctx context.Context, f ProxyEventFilter,
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT e.id, e.ts, COALESCE(e.user_id,0), COALESCE(u.username,''),
                 COALESCE(e.client_id,0), COALESCE(c.name,''),
-                e.target_host, e.protocol, e.outcome,
+                e.target_host, e.protocol, e.outcome, e.outcome_reason,
                 e.bytes_in, e.bytes_out, e.duration_ms
          FROM proxy_events e
          LEFT JOIN users   u ON u.id = e.user_id
@@ -785,7 +786,7 @@ func (s *Store) ListProxyEventsFiltered(ctx context.Context, f ProxyEventFilter,
 		var p ProxyEvent
 		var ts int64
 		if err := rows.Scan(&p.ID, &ts, &p.UserID, &p.Username, &p.ClientID, &p.ClientName,
-			&p.TargetHost, &p.Protocol, &p.Outcome,
+			&p.TargetHost, &p.Protocol, &p.Outcome, &p.OutcomeReason,
 			&p.BytesIn, &p.BytesOut, &p.DurationMS); err != nil {
 			return nil, err
 		}

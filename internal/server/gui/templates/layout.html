@@ -75,7 +75,7 @@
       {{end}}
     </div>
     {{if .User}}
-    <div id="nav-mobile" class="hidden md:hidden pb-3 flex flex-col gap-1 text-sm">
+    <div id="nav-mobile" class="hidden md:hidden pb-3 flex-col gap-1 text-sm">
       <a class="px-2 py-2 {{if eq .Active "dashboard"}}text-accent{{else}}text-dim hover:text-fg{{end}}" href="/"><i class="bi bi-speedometer2 mr-1"></i>{{t "nav.dashboard"}}</a>
       <a class="px-2 py-2 {{if eq .Active "clients"}}text-accent{{else}}text-dim hover:text-fg{{end}}" href="/clients"><i class="bi bi-hdd-network mr-1"></i>{{t "nav.clients"}}</a>
       <a class="px-2 py-2 {{if eq .Active "access"}}text-accent{{else}}text-dim hover:text-fg{{end}}" href="/access"><i class="bi bi-file-earmark-lock mr-1"></i>{{t "nav.access"}}</a>

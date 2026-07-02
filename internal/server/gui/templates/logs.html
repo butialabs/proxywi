@@ -45,9 +45,9 @@
         <tr data-id="{{.ID}}" class="border-b border-border hover:bg-accent/5">
           <td class="px-3 py-2 text-dim text-xs font-mono">{{.TSHuman}}</td>
           <td class="px-3 py-2">
-            {{if eq .Outcome "ok"}}<span title="Ok" class="inline-flex items-center gap-1 text-accent"><i class="bi bi-check-circle mr-1"></i></span>
-            {{else if eq .Outcome "denied"}}<span  title="Denied" class="inline-flex items-center gap-1 text-amber"><i class="bi bi-slash-circle mr-1"></i></span>
-            {{else}}<span title="{{.Outcome}}" class="inline-flex items-center gap-1 text-danger"><i class="bi bi-x-circle mr-1"></i></span>{{end}}
+            {{if eq .Outcome "ok"}}<span class="inline-flex items-center gap-1 text-accent"><i class="bi bi-check-circle mr-1"></i></span>
+            {{else if eq .Outcome "denied"}}<span title="{{t .OutcomeTitle}}" class="inline-flex items-center gap-1 text-amber"><i class="bi bi-slash-circle mr-1"></i></span>
+            {{else}}<span title="{{t .OutcomeTitle}}" class="inline-flex items-center gap-1 text-danger"><i class="bi bi-x-circle mr-1"></i></span>{{end}}
           </td>
           <td class="px-3 py-2"><span class="inline-flex items-center gap-1 text-dim">{{.Protocol}}</span></td>
           <td class="px-3 py-2">{{.User}}</td>

@@ -91,12 +91,12 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	u, authed := s.Gate.VerifyCredentials(ctx, username, password)
 	if !authed {
 		_, _ = conn.Write([]byte{0x01, 0x01})
-		s.logEvent(ctx, 0, username, 0, "", "", "socks", "denied", 0, 0, 0)
+		s.logEvent(ctx, 0, username, 0, "", "", "socks", "denied", "auth", 0, 0, 0)
 		return
 	}
 	if !s.Gate.AllowProxyRequest(u.Username) {
 		_, _ = conn.Write([]byte{0x01, 0x01})
-		s.logEvent(ctx, u.ID, u.Username, 0, "", "", "socks", "denied", 0, 0, 0)
+		s.logEvent(ctx, u.ID, u.Username, 0, "", "", "socks", "denied", "ratelimit", 0, 0, 0)
 		return
 	}
 	if _, err := conn.Write([]byte{0x01, 0x00}); err != nil {
@@ -111,7 +111,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	agent, err := s.Registry.PickNext()
 	if err != nil {
 		_, _ = conn.Write(socksReply(socksRepNetUnreach))
-		s.logEvent(ctx, u.ID, u.Username, 0, "", target, "socks", "failed", 0, 0, 0)
+		s.logEvent(ctx, u.ID, u.Username, 0, "", target, "socks", "failed", "no_agent", 0, 0, 0)
 		return
 	}
 
@@ -120,7 +120,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	cancel()
 	if err != nil {
 		_, _ = conn.Write(socksReply(socksRepHostUnreac))
-		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", 0, 0, 0)
+		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", "dial", 0, 0, 0)
 		return
 	}
 	defer func() { _ = upstream.Close() }()
@@ -129,12 +129,12 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	var reply tunnel.ProxyReply
 	if err := tunnel.ReadJSONLine(upReader, &reply); err != nil {
 		_, _ = conn.Write(socksReply(socksRepGeneralErr))
-		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", 0, 0, 0)
+		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", "reply", 0, 0, 0)
 		return
 	}
 	if !reply.OK {
 		_, _ = conn.Write(socksReply(socksRepConnRefuse))
-		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", 0, 0, 0)
+		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", "upstream", 0, 0, 0)
 		return
 	}
 
@@ -155,27 +155,28 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	}
 
 	bytesIn, bytesOut = pipe(conn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
-	s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "ok",
+	s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "ok", "",
 		bytesIn, bytesOut, time.Since(start).Milliseconds())
 }
 
 func (s *SOCKSProxy) logEvent(ctx context.Context,
 	userID int64, user string,
 	clientID int64, clientName string,
-	target, proto, outcome string,
+	target, proto, outcome, reason string,
 	bIn, bOut, durMS int64) {
 	ev := storage.ProxyEvent{
-		TS:         time.Now(),
-		UserID:     userID,
-		Username:   user,
-		ClientID:   clientID,
-		ClientName: clientName,
-		TargetHost: target,
-		Protocol:   proto,
-		Outcome:    outcome,
-		BytesIn:    bIn,
-		BytesOut:   bOut,
-		DurationMS: durMS,
+		TS:            time.Now(),
+		UserID:        userID,
+		Username:      user,
+		ClientID:      clientID,
+		ClientName:    clientName,
+		TargetHost:    target,
+		Protocol:      proto,
+		Outcome:       outcome,
+		OutcomeReason: reason,
+		BytesIn:       bIn,
+		BytesOut:      bOut,
+		DurationMS:    durMS,
 	}
 	id, err := s.Store.InsertProxyEvent(ctx, ev)
 	if err != nil {

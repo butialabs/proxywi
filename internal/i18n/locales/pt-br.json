@@ -121,6 +121,17 @@
   "logs.filter_all_clients": "Todos os clientes",
   "logs.filter_search": "Destino…",
 
+  "log.reason.denied.auth": "Credenciais inválidas",
+  "log.reason.denied.ratelimit": "Rate limit excedido",
+  "log.reason.failed.no_agent": "Sem agente disponível",
+  "log.reason.failed.dial": "Falha na conexão com agente",
+  "log.reason.failed.reply": "Resposta inválida do agente",
+  "log.reason.failed.upstream": "Agente recusou a conexão",
+  "log.reason.failed.hijack": "Erro interno do servidor",
+  "log.reason.failed.write": "Falha ao enviar requisição ao agente",
+  "log.reason.denied": "Acesso negado",
+  "log.reason.failed": "Falha",
+
   "time.never": "nunca",
   "time.ago": "atrás",
   "time.in": "em",

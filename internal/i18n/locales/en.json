@@ -121,6 +121,17 @@
   "logs.filter_all_clients": "All clients",
   "logs.filter_search": "Target…",
 
+  "log.reason.denied.auth": "Invalid credentials",
+  "log.reason.denied.ratelimit": "Rate limit exceeded",
+  "log.reason.failed.no_agent": "No upstream agent available",
+  "log.reason.failed.dial": "Upstream connection failed",
+  "log.reason.failed.reply": "Invalid upstream reply",
+  "log.reason.failed.upstream": "Upstream refused connection",
+  "log.reason.failed.hijack": "Internal server error",
+  "log.reason.failed.write": "Failed to send request to agent",
+  "log.reason.denied": "Access denied",
+  "log.reason.failed": "Failed",
+
   "time.never": "never",
   "time.ago": "ago",
   "time.in": "in",
