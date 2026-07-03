@@ -1,15 +1,15 @@
 services:
-  proxywi-server:
-    container_name: proxywi-server
-    image: ghcr.io/butialabs/proxywi-server:latest
+  proxywi-caddy:
+    container_name: proxywi-caddy
+    image: ghcr.io/butialabs/proxywi-caddy:latest
     restart: unless-stopped
     environment:
       PROXYWI_DOMAIN: "proxy.example.com"
       ACME_EMAIL: "email@example.com"
-      ADMIN_USERNAME: "admin"
-      ADMIN_PASSWORD: "change-me"
     volumes:
-      - ./proxywi/data:/data
+      - ./proxywi/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./proxywi/caddy/data:/data
+      - ./proxywi/caddy/config:/config
     ports:
       - "80:80"
       - "443:443"
@@ -17,9 +17,21 @@ services:
       - "8443:8443"
       - "1080:1080"
     networks:
-      - proxywi-server
+      - proxywi
+
+  proxywi-server:
+    container_name: proxywi-server
+    image: ghcr.io/butialabs/proxywi-server:latest
+    restart: unless-stopped
+    environment:
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "change-me"
+    volumes:
+      - ./proxywi/data:/data
+    networks:
+      - proxywi
 
 networks:
-  proxywi-server:
-    name: proxywi-server
+  proxywi:
+    name: proxywi
     driver: bridge

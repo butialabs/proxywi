@@ -2,11 +2,13 @@ name: Release
 
 # v*-server  → publishes proxywi-server only
 # v*-client  → publishes proxywi-client only
+# v*-caddy   → publishes proxywi-caddy only
 on:
   push:
     tags:
       - "v*-server"
       - "v*-client"
+      - "v*-caddy"
   workflow_dispatch:
     inputs:
       component:
@@ -14,7 +16,7 @@ on:
         required: true
         default: "both"
         type: choice
-        options: [both, server, client]
+        options: [both, server, client, caddy]
 
 env:
   REGISTRY: ghcr.io
@@ -36,28 +38,32 @@ jobs:
     outputs:
       server_build: ${{ steps.out.outputs.server_build }}
       client_build: ${{ steps.out.outputs.client_build }}
+      caddy_build:  ${{ steps.out.outputs.caddy_build }}
     steps:
       - name: Resolve build flags
         id: out
         env:
           COMPONENT_INPUT: ${{ inputs.component }}
         run: |
-          server=false; client=false
+          server=false; client=false; caddy=false
           EVENT_NAME="${{ github.event_name }}"
           REF_NAME="${{ github.ref_name }}"
           case "$EVENT_NAME" in
             workflow_dispatch)
               [[ "$COMPONENT_INPUT" == "both" || "$COMPONENT_INPUT" == "server" ]] && server=true
               [[ "$COMPONENT_INPUT" == "both" || "$COMPONENT_INPUT" == "client" ]] && client=true
+              [[ "$COMPONENT_INPUT" == "caddy" ]] && caddy=true
               ;;
             push)
               [[ "$REF_NAME" == *"-server" ]] && server=true
               [[ "$REF_NAME" == *"-client" ]] && client=true
+              [[ "$REF_NAME" == *"-caddy"  ]] && caddy=true
               ;;
           esac
           echo "server_build=$server" >> "$GITHUB_OUTPUT"
           echo "client_build=$client" >> "$GITHUB_OUTPUT"
-          echo "server=$server client=$client"
+          echo "caddy_build=$caddy"   >> "$GITHUB_OUTPUT"
+          echo "server=$server client=$client caddy=$caddy"
 
   setup:
     runs-on: ubuntu-latest
@@ -181,6 +187,107 @@ jobs:
       - name: Inspect
         run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-server:${{ steps.meta.outputs.version }}
 
+  # CADDY
+  caddy-build:
+    needs: decide
+    if: needs.decide.outputs.caddy_build == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/caddy/Dockerfile
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-caddy,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=caddy-${{ matrix.arch }}
+          cache-to:   type=gha,mode=max,scope=caddy-${{ matrix.arch }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-caddy-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  caddy-merge:
+    needs: caddy-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-caddy-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-caddy
+          tags: |
+            type=match,pattern=v(.*)-caddy,group=1,enable=${{ github.ref_type == 'tag' }}
+            type=match,pattern=v(.*)-caddy,group=1,prefix=v,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+
+      - name: Create manifest list
+        working-directory: /tmp/digests
+        run: |
+          mapfile -t tags < <(jq -cr '.tags[]' <<< "${DOCKER_METADATA_OUTPUT_JSON}")
+          tag_args=()
+          for t in "${tags[@]}"; do
+            tag_args+=("--tag" "$t")
+          done
+          refs=()
+          for f in *; do
+            refs+=("${REGISTRY}/${IMAGE_OWNER}/proxywi-caddy@$(cat "$f")")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
+
+      - name: Inspect
+        run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-caddy:${{ steps.meta.outputs.version }}
+
   # CLIENT
   client-build:
     needs: decide
@@ -290,8 +397,8 @@ jobs:
   publish-release:
     name: 📦 Publish release
     runs-on: ubuntu-24.04
-    needs: [setup, server-merge, client-merge]
-    if: always() && github.event_name == 'push' && github.ref_type == 'tag' && (needs.server-merge.result == 'success' || needs.client-merge.result == 'success')
+    needs: [setup, server-merge, client-merge, caddy-merge]
+    if: always() && github.event_name == 'push' && github.ref_type == 'tag' && (needs.server-merge.result == 'success' || needs.client-merge.result == 'success' || needs.caddy-merge.result == 'success')
     permissions:
       contents: write
       models: read

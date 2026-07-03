@@ -14,13 +14,13 @@ It is the "bring-your-own-IP" proxy setup most scraping and privacy tools assume
 
 ```
                          proxywi.example.com
-        ┌──────────────────────────────────────────────────────────────┐
-        │  Caddy (caddy-l4)               proxywi-server                │
-        │  :443  GUI + wss   ───────────► :3000  Admin UI + WS control   │
-        │  :8443 HTTPS proxy ──TLS──────► :8080  HTTP forward proxy      │
-        │  :1080 SOCKS5      ───────────► :11080 SOCKS5 proxy            │
-        │  :80   ACME                     (PROXY protocol → real IP)     │
-        └──────────────────────────────────────────────────────────────┘
+        ┌─────────────────────┐    ┌──────────────────────────────────────┐
+        │   proxywi-caddy     │    │          proxywi-server              │
+        │  :443  GUI + wss  ──┼───►│  :3000  Admin UI + WS control        │
+        │  :8443 HTTPS proxy ─┼───►│  :8080  HTTP forward proxy           │
+        │  :1080 SOCKS5      ─┼───►│  :1080  SOCKS5 proxy                 │
+        │  :80   ACME         │    │         (PROXY protocol → real IP)   │
+        └─────────────────────┘    └──────────────────────────────────────┘
                  ▲ wss (agents dial out)        ▲ yamux stream per
                  │                              │ proxied connection
         ┌────────┴───────────────┬─────────────┴────────┐
@@ -28,7 +28,8 @@ It is the "bring-your-own-IP" proxy setup most scraping and privacy tools assume
    (home, BR)                (VPS, DE)              …
 ```
 
-- The **server** ships as a single all-in-one Docker image!
+- **`proxywi-caddy`** handles TLS termination, ACME certificate renewal, and PROXY protocol forwarding
+- **`proxywi-server`** runs the proxy logic and admin GUI
 - **Agents** run the client image. They dial *out* over `wss://` to `/ws/control` (so they work behind NAT/firewall without port-forwarding), finish a **token-only** handshake, and multiplex proxy streams over the tunnel with **yamux**
 - When someone hits `user:pass@proxywi.example.com:8443` (HTTPS proxy) or `user:pass@proxywi.example.com:1080` (SOCKS5), the server authenticates them, picks a random online agent, opens a new yamux stream to that agent over the long-lived control tunnel
 
@@ -41,17 +42,19 @@ It is the "bring-your-own-IP" proxy setup most scraping and privacy tools assume
 ```bash
 nano compose.yml
 ```
-```bash
+```yaml
 services:
-  proxywi-server:
-    container_name: proxywi-server
-    image: ghcr.io/butialabs/proxywi-server:latest
+  proxywi-caddy:
+    container_name: proxywi-caddy
+    image: ghcr.io/butialabs/proxywi-caddy:latest
     restart: unless-stopped
     environment:
       PROXYWI_DOMAIN: "proxy.example.com"
       ACME_EMAIL: "email@example.com"
     volumes:
-      - ./proxywi/data:/data
+      - ./proxywi/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./proxywi/caddy/data:/data
+      - ./proxywi/caddy/config:/config
     ports:
       - "80:80"
       - "443:443"
@@ -59,15 +62,34 @@ services:
       - "8443:8443"
       - "1080:1080"
     networks:
-      - proxywi-server
+      - proxywi
+
+  proxywi-server:
+    container_name: proxywi-server
+    image: ghcr.io/butialabs/proxywi-server:latest
+    restart: unless-stopped
+    environment:
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "change-me"
+    volumes:
+      - ./proxywi/data:/data
+    networks:
+      - proxywi
 
 networks:
-  proxywi-server:
-    name: proxywi-server
+  proxywi:
+    name: proxywi
     driver: bridge
 ```
 ```bash
 docker compose -f compose.yml up -d
+```
+
+The `proxywi-caddy` service expects a Caddyfile at `./proxywi/caddy/Caddyfile`. Copy the default from the repo:
+
+```bash
+mkdir -p ./proxywi/caddy
+cp docker/caddy/Caddyfile ./proxywi/caddy/Caddyfile
 ```
 
 ### 2. Enroll an agent
@@ -94,30 +116,37 @@ Run it 10 times in a loop: each call exits through a different agent.
 
 ## Configuration
 
-### Server
+### proxywi-caddy
 
-| Variable                    | Default              | Purpose |
-|-----------------------------|----------------|---------|
-| `PROXYWI_DOMAIN`            | *required*     | Public host. Used by the bundled Caddy for automatic HTTPS and by the GUI. Set this in `.env`. |
-| `ACME_EMAIL`               | *required*      | Let's Encrypt contact for the bundled Caddy. Set this in `.env`. |
-| `PROXYWI_PORT`              | `3000`         | Admin GUI + WS control plane listener (internal; Caddy publishes `443`) |
-| `PROXYWI_PROXY_HTTP_PORT`   | `8080`         | HTTP forward-proxy listener (internal; Caddy publishes `8443` over TLS) |
-| `PROXYWI_PROXY_SOCKET_PORT` | `11080`        | SOCKS5 listener (internal; Caddy publishes `1080`) |
-| `PROXYWI_PROXY_PROTOCOL`    | `true`         | Accept the PROXY protocol on the proxy listeners so the real client IP survives the bundled Caddy. Only enable behind a trusted L4 terminator. |
-| `PROXYWI_DATA_DIR`          | `./data`       | Where SQLite data lives |
-| `ADMIN_USERNAME`            | *required*     | Initial administrator username. Created on first start if no admin exists. |
-| `ADMIN_PASSWORD`            | *required*     | Initial administrator password (min. 8 characters). |
-| `PROXYWI_RATE_LIMIT_MAX`    | `5`            | Max proxy requests per user per window. |
-| `PROXYWI_RATE_LIMIT_WINDOW` | `1s`           | Rate-limit window duration (`500ms`, `2s`, `1m`, etc.). |
-| `PROXYWI_BLOCK_CATEGORIES`  | *(unset)*      | Comma-separated list of domain categories to block on all proxy connections. Supported values: `adult`, `gambling`, `crypto`. Lists are downloaded from public blocklists on startup and refreshed weekly. Example: `adult,gambling`. |
+| Variable         | Default    | Purpose |
+|------------------|------------|---------|
+| `PROXYWI_DOMAIN` | *required* | Public hostname. Used by Caddy for automatic HTTPS. |
+| `ACME_EMAIL`     | *required* | Let's Encrypt contact email. |
 
-> The image ships with the proxy listeners on internal ports and `PROXYWI_PROXY_PROTOCOL=true`; you normally only set `PROXYWI_DOMAIN` and `ACME_EMAIL`. Published ports: **443** (GUI/wss), **8443** (HTTPS proxy), **1080** (SOCKS5), **80** (ACME).
+The Caddyfile mounts at `/etc/caddy/Caddyfile`. Edit it to change upstream ports, add TLS options, or configure DNS challenge providers.
+
+### proxywi-server
+
+| Variable                    | Default    | Purpose |
+|-----------------------------|------------|---------|
+| `PROXYWI_PORT`              | `3000`     | Admin GUI + WS control plane listener. |
+| `PROXYWI_PROXY_HTTP_PORT`   | `8080`     | HTTP forward-proxy listener (Caddy publishes `8443` over TLS). |
+| `PROXYWI_PROXY_SOCKET_PORT` | `1080`     | SOCKS5 listener (Caddy publishes `1080`). |
+| `PROXYWI_PROXY_PROTOCOL`    | `true`     | Accept the PROXY protocol on proxy listeners so the real client IP survives Caddy. Only enable behind a trusted L4 terminator. |
+| `PROXYWI_DATA_DIR`          | `./data`   | Where SQLite data lives. |
+| `ADMIN_USERNAME`            | *required* | Initial administrator username. Created on first start if no admin exists. |
+| `ADMIN_PASSWORD`            | *required* | Initial administrator password (min. 8 characters). |
+| `PROXYWI_RATE_LIMIT_MAX`    | `5`        | Max proxy requests per user per window. |
+| `PROXYWI_RATE_LIMIT_WINDOW` | `1s`       | Rate-limit window duration (`500ms`, `2s`, `1m`, etc.). |
+| `PROXYWI_BLOCK_CATEGORIES`  | *(unset)*  | Comma-separated list of domain categories to block on all proxy connections. Supported values: `adult`, `gambling`, `crypto`. Lists are downloaded from public blocklists on startup and refreshed weekly. Example: `adult,gambling`. |
+
+> `proxywi-server` is not exposed to the host directly — all traffic goes through `proxywi-caddy` on the shared Docker network.
 
 ### Client / agent
 
 | Variable                | Default    | Purpose |
 |-------------------------|------------|---------|
-| `PROXYWI_SERVER`        | *required* | e.g. `ws://proxywi.xyz:3000` or `wss://proxywi.xyz` when a TLS-terminating reverse proxy is in front. Points at `PROXYWI_DOMAIN`. |
+| `PROXYWI_SERVER`        | *required* | e.g. `wss://proxywi.example.com` (Caddy terminates TLS on `:443`). |
 | `PROXYWI_TOKEN`         | *required* | Token from the GUI, shown once at enrollment. This is the only credential the agent needs. |
 | `PROXYWI_TLS_INSECURE`  | `false`    | Skip TLS verification when dialing the control plane over `wss://` behind a self-signed reverse proxy. |
 

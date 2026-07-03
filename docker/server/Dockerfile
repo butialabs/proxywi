@@ -11,28 +11,21 @@ COPY internal/tunnel      ./internal/tunnel
 ENV CGO_ENABLED=0
 RUN go build -trimpath -ldflags="-s -w" -o /out/proxywi-server ./cmd/proxywi-server
 
-FROM caddy:2-builder AS caddy-build
-RUN xcaddy build --with github.com/mholt/caddy-l4
-
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates && mkdir -p /data /config
 
-COPY --from=build       /out/proxywi-server /usr/bin/proxywi-server
-COPY --from=caddy-build /usr/bin/caddy      /usr/bin/caddy
-COPY docker/server/Caddyfile     /etc/caddy/Caddyfile
-COPY docker/server/entrypoint.sh /entrypoint.sh
-RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh && mkdir -p /data /config
+COPY --from=build /out/proxywi-server /usr/bin/proxywi-server
 
 ENV PROXYWI_DATA_DIR=/data \
     XDG_DATA_HOME=/data \
     XDG_CONFIG_HOME=/config \
     PROXYWI_PORT=3000 \
     PROXYWI_PROXY_HTTP_PORT=8080 \
-    PROXYWI_PROXY_SOCKET_PORT=11080 \
+    PROXYWI_PROXY_SOCKET_PORT=1080 \
     PROXYWI_PROXY_PROTOCOL=true
 
 VOLUME ["/data"]
 
-EXPOSE 80 443 8443 1080
+EXPOSE 3000 8080 11080
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/proxywi-server"]
