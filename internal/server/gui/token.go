@@ -15,14 +15,22 @@ func (g *GUI) clientByToken(ctx context.Context, token string) (*storage.Client,
 	if token == "" {
 		return nil, nil
 	}
+	sha256h := storage.SHA256Token(token)
 	tokenID := storage.TokenIDFromToken(token)
 	if tokenID != "" {
 		cl, err := g.Store.ClientByTokenID(ctx, tokenID)
 		if err != nil {
 			return nil, err
 		}
-		if cl != nil && bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
-			return cl, nil
+		if cl != nil {
+			if cl.TokenHashSHA256 != "" {
+				if cl.TokenHashSHA256 == sha256h {
+					return cl, nil
+				}
+			} else if bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
+				go func() { _ = g.Store.SetClientTokenSHA256(context.Background(), cl.ID, sha256h) }()
+				return cl, nil
+			}
 		}
 	}
 	// Fallback for legacy tokens without token_id.
@@ -31,8 +39,18 @@ func (g *GUI) clientByToken(ctx context.Context, token string) (*storage.Client,
 		return nil, err
 	}
 	for id, h := range hashes {
-		if bcrypt.CompareHashAndPassword([]byte(h), []byte(token)) == nil {
+		if h.SHA256 != "" && h.SHA256 == sha256h {
 			return g.Store.ClientByID(ctx, id)
+		}
+	}
+	for id, h := range hashes {
+		if h.SHA256 == "" && bcrypt.CompareHashAndPassword([]byte(h.Bcrypt), []byte(token)) == nil {
+			cl, err := g.Store.ClientByID(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			go func(clientID int64) { _ = g.Store.SetClientTokenSHA256(context.Background(), clientID, sha256h) }(id)
+			return cl, nil
 		}
 	}
 	return nil, nil
