@@ -22,6 +22,11 @@ type MetricsEvent struct {
 	BytesOut int64 `json:"bytes_out"`
 }
 
+type PingEvent struct {
+	ID     int64 `json:"id"`
+	PingMS int64 `json:"ping_ms"`
+}
+
 type ProxyLogEvent struct {
 	ID         int64  `json:"id"`
 	TS         int64  `json:"ts"`
@@ -33,6 +38,7 @@ type ProxyLogEvent struct {
 	BytesIn    int64  `json:"bytes_in"`
 	BytesOut   int64  `json:"bytes_out"`
 	DurationMS int64  `json:"duration_ms"`
+	ConnectMS  int64  `json:"connect_ms"`
 	Outcome    string `json:"outcome"` // ok | denied | failed
 }
 

@@ -50,19 +50,19 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !authed {
 		w.Header().Set("Proxy-Authenticate", `Basic realm="proxywi"`)
 		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
-		p.logEvent(ctx, 0, user, 0, "", "", "http", "denied", "auth", 0, 0, 0)
+		p.logEvent(ctx, 0, user, 0, "", "", "http", "denied", "auth", 0, 0, 0, 0)
 		return
 	}
 	if !p.Gate.AllowProxyRequest(u.Username) {
 		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
-		p.logEvent(ctx, u.ID, u.Username, 0, "", "", "http", "denied", "ratelimit", 0, 0, 0)
+		p.logEvent(ctx, u.ID, u.Username, 0, "", "", "http", "denied", "ratelimit", 0, 0, 0, 0)
 		return
 	}
 
 	agent, err := p.Registry.PickNext()
 	if err != nil {
 		http.Error(w, "No upstream agent available", http.StatusBadGateway)
-		p.logEvent(ctx, u.ID, u.Username, 0, "", "", "http", "failed", "no_agent", 0, 0, 0)
+		p.logEvent(ctx, u.ID, u.Username, 0, "", "", "http", "failed", "no_agent", 0, 0, 0, 0)
 		return
 	}
 
@@ -85,17 +85,18 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if p.Blocklist.IsBlocked(host) {
 			http.Error(w, "Blocked by content policy", http.StatusForbidden)
-			p.logEvent(ctx, u.ID, u.Username, 0, "", target, "http", "denied", "blocklist", 0, 0, 0)
+			p.logEvent(ctx, u.ID, u.Username, 0, "", target, "http", "denied", "blocklist", 0, 0, 0, 0)
 			return
 		}
 	}
 
+	dialStart := time.Now()
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	upstream, err := agent.OpenProxyStream(dialCtx, target)
 	cancel()
 	if err != nil {
 		http.Error(w, "Upstream dial failed", http.StatusBadGateway)
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "dial", 0, 0, 0)
+		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "dial", 0, 0, 0, 0)
 		return
 	}
 	defer func() { _ = upstream.Close() }()
@@ -104,24 +105,25 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var reply tunnel.ProxyReply
 	if err := tunnel.ReadJSONLine(upReader, &reply); err != nil {
 		http.Error(w, "Upstream reply error", http.StatusBadGateway)
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "reply", 0, 0, 0)
+		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "reply", 0, 0, 0, 0)
 		return
 	}
 	if !reply.OK {
 		http.Error(w, "Upstream: "+reply.Error, http.StatusBadGateway)
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "upstream", 0, 0, 0)
+		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "upstream", 0, 0, 0, 0)
 		return
 	}
+	connectMS := time.Since(dialStart).Milliseconds()
 
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "hijack not supported", http.StatusInternalServerError)
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "hijack", 0, 0, 0)
+		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "hijack", 0, 0, 0, 0)
 		return
 	}
 	clientConn, bufrw, err := hj.Hijack()
 	if err != nil {
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "hijack", 0, 0, 0)
+		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "hijack", 0, 0, 0, 0)
 		return
 	}
 	defer func() { _ = clientConn.Close() }()
@@ -147,7 +149,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		bytesIn, bytesOut = pipe(clientConn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
 		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "ok", "",
-			bytesIn, bytesOut, time.Since(start).Milliseconds())
+			bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
 		return
 	}
 
@@ -157,7 +159,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	reqBytes := &countingWriter{w: upstream}
 	if err := r.Write(reqBytes); err != nil {
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "write", 0, 0, 0)
+		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "write", 0, 0, 0, 0)
 		return
 	}
 	bytesOut += reqBytes.n
@@ -165,7 +167,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := http.ReadResponse(bufio.NewReader(upstream), r)
 	if err != nil {
 		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "reply",
-			bytesIn, bytesOut, time.Since(start).Milliseconds())
+			bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -175,13 +177,13 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	respBytes := &countingWriter{w: clientConn}
 	if err := resp.Write(respBytes); err != nil {
 		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "write",
-			bytesIn, bytesOut, time.Since(start).Milliseconds())
+			bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
 		return
 	}
 	bytesIn += respBytes.n
 
 	p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "ok", "",
-		bytesIn, bytesOut, time.Since(start).Milliseconds())
+		bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
 }
 
 type countingWriter struct {
@@ -224,7 +226,7 @@ func (p *HTTPProxy) logEvent(ctx context.Context,
 	userID int64, user string,
 	clientID int64, clientName string,
 	target, proto, outcome, reason string,
-	bIn, bOut, durMS int64) {
+	bIn, bOut, durMS, connectMS int64) {
 	ev := storage.ProxyEvent{
 		TS:            time.Now(),
 		UserID:        userID,
@@ -238,6 +240,7 @@ func (p *HTTPProxy) logEvent(ctx context.Context,
 		BytesIn:       bIn,
 		BytesOut:      bOut,
 		DurationMS:    durMS,
+		ConnectMS:     connectMS,
 	}
 	id, err := p.Store.InsertProxyEvent(ctx, ev)
 	if err != nil {
@@ -253,7 +256,7 @@ func (p *HTTPProxy) logEvent(ctx context.Context,
 				ClientID: clientID, ClientName: clientName,
 				Target: target, Protocol: proto,
 				BytesIn: bIn, BytesOut: bOut,
-				DurationMS: durMS, Outcome: outcome,
+				DurationMS: durMS, ConnectMS: connectMS, Outcome: outcome,
 			},
 		})
 	}
@@ -271,21 +274,25 @@ func pipe(client net.Conn, upstream net.Conn, inSeed, outSeed int64, idleTimeout
 
 	go func() {
 		n, _ := io.Copy(upstream, client)
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
+		halfClose(upstream)
 		outCh <- n
 	}()
 	go func() {
 		n, _ := io.Copy(client, upstream)
-		if cw, ok := client.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
+		halfClose(client)
 		inCh <- n
 	}()
 	out := <-outCh
 	in := <-inCh
 	return inSeed + in, outSeed + out
+}
+
+func halfClose(c net.Conn) {
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+	} else {
+		_ = c.Close()
+	}
 }
 
 func refreshDeadlines(ctx context.Context, a, b net.Conn, idleTimeout time.Duration) {

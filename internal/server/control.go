@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/butialabs/proxywi/internal/storage"
@@ -139,29 +140,56 @@ func (c *Control) readMetaStream(ctx context.Context, agent *Agent) {
 	}
 	defer func() { _ = stream.Close() }()
 
-	br := bufio.NewReader(stream)
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	var writeMu sync.Mutex
+	sendMsg := func(msg tunnel.MetaMessage) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return tunnel.WriteJSONLine(stream, msg)
+	}
+
+	seenTicker := time.NewTicker(30 * time.Second)
+	defer seenTicker.Stop()
+	pingTicker := time.NewTicker(30 * time.Second)
+	defer pingTicker.Stop()
+
 	go func() {
-		for range ticker.C {
-			_ = c.Store.MarkClientSeen(ctx, agent.ID, agent.AgentVersion)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-seenTicker.C:
+				_ = c.Store.MarkClientSeen(ctx, agent.ID, agent.AgentVersion)
+			case <-pingTicker.C:
+				_ = sendMsg(tunnel.MetaMessage{Type: "ping", SentAt: time.Now().UnixNano()})
+			}
 		}
 	}()
 
+	br := bufio.NewReader(stream)
 	for {
 		var msg tunnel.MetaMessage
 		if err := tunnel.ReadJSONLine(br, &msg); err != nil {
 			return
 		}
-		if c.OnEvent != nil {
-			c.OnEvent(agent.ID, msg)
+		if msg.Type == "pong" {
+			rttMS := (time.Now().UnixNano() - msg.SentAt) / int64(time.Millisecond)
+			if err := c.Store.UpdateClientPing(ctx, agent.ID, rttMS); err != nil {
+				c.Log.Warn("update client ping", "err", err)
+			}
+			if c.Hub != nil {
+				c.Hub.Publish(Event{Type: "client_ping", Data: PingEvent{ID: agent.ID, PingMS: rttMS}})
+			}
+			continue
 		}
-		if c.Hub != nil && msg.Type == "metrics" {
+		if msg.Type == "metrics" && c.Hub != nil {
 			c.Hub.Publish(Event{Type: "metrics", Data: MetricsEvent{
 				ClientID: agent.ID,
 				BytesIn:  msg.BytesIn,
 				BytesOut: msg.BytesOut,
 			}})
+		}
+		if c.OnEvent != nil {
+			c.OnEvent(agent.ID, msg)
 		}
 	}
 }

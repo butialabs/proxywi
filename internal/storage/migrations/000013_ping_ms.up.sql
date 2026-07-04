@@ -1,0 +1,2 @@
+ALTER TABLE clients ADD COLUMN ping_ms   INTEGER;
+ALTER TABLE clients ADD COLUMN pinged_at INTEGER;

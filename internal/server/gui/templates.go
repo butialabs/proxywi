@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"html/template"
 	"io"
 
@@ -22,6 +23,22 @@ var appJS string
 
 //go:embed dist
 var staticFS embed.FS
+
+// assetVer is a short content-hash used as a cache-busting query param for
+// CSS/JS/SVG assets. It changes whenever any of those files is rebuilt.
+var assetVer string
+
+func init() {
+	h := fnv.New64a()
+	h.Write([]byte(appCSS))
+	h.Write([]byte(appJS))
+	for _, path := range []string{"dist/img/icons.svg"} {
+		if data, err := staticFS.ReadFile(path); err == nil {
+			h.Write(data)
+		}
+	}
+	assetVer = fmt.Sprintf("%x", h.Sum64())[:8]
+}
 
 type templates struct {
 	layout []byte
@@ -61,6 +78,7 @@ func (t *templates) render(w io.Writer, name string, tr i18n.Translator, data an
 		"tp":     func(key string, params any) string { return expandParams(tr(key), params) },
 		"appCSS": func() template.CSS { return template.CSS(appCSS) },
 		"appJS":  func() template.JS { return template.JS(appJS) },
+		"ver":    func() string { return assetVer },
 		"json": func(v any) (template.JS, error) {
 			b, err := json.Marshal(v)
 			if err != nil {

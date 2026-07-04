@@ -51,11 +51,12 @@ type ProxyReply struct {
 }
 
 type MetaMessage struct {
-	Type string `json:"type"` // heartbeat | metrics
+	Type string `json:"type"` // heartbeat | metrics | ping | pong
 
 	BytesIn     int64 `json:"bytes_in,omitempty"`
 	BytesOut    int64 `json:"bytes_out,omitempty"`
 	ActiveConns int   `json:"active_conns,omitempty"`
+	SentAt      int64 `json:"sent_at,omitempty"`
 }
 
 var ErrBadHandshake = errors.New("bad handshake")

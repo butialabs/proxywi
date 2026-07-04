@@ -1,0 +1,1 @@
+ALTER TABLE proxy_events ADD COLUMN connect_ms INTEGER NOT NULL DEFAULT 0;

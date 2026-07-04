@@ -186,12 +186,16 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+const pingDegradedThresholdMS = 2000
+
 type clientView struct {
 	ID            int64
 	Name          string
 	AgentVersion  string
 	Online        bool
 	LastSeenHuman string
+	PingMS        *int64
+	PingStatus    string // "ok" | "degraded" | "unknown"
 }
 
 const composeTokenPlaceholder = "<paste-your-token-here>"
@@ -203,12 +207,22 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 	views := make([]clientView, 0, len(list))
 	for _, c := range list {
 		_, online := g.Registry.Get(c.ID)
+		pingStatus := "unknown"
+		if c.PingMS != nil {
+			if *c.PingMS > pingDegradedThresholdMS {
+				pingStatus = "degraded"
+			} else {
+				pingStatus = "ok"
+			}
+		}
 		views = append(views, clientView{
 			ID:            c.ID,
 			Name:          c.Name,
 			AgentVersion:  c.AgentVersion,
 			Online:        online,
 			LastSeenHuman: humanSince(c.LastSeen),
+			PingMS:        c.PingMS,
+			PingStatus:    pingStatus,
 		})
 	}
 	data := map[string]any{
@@ -437,6 +451,7 @@ type logView struct {
 	BytesInH     string
 	BytesOutH    string
 	DurationMS   int64
+	ConnectMS    int64
 }
 
 func outcomeTitle(outcome, reason string) string {
@@ -492,6 +507,7 @@ func (g *GUI) getGlobalStats(w http.ResponseWriter, r *http.Request) {
 			BytesInH:      humanBytes(s.BytesIn),
 			BytesOutH:     humanBytes(s.BytesOut),
 			AvgDurationMS: s.AvgDurationMS,
+			AvgConnectMS:  s.AvgConnectMS,
 		})
 	}
 	g.render(w, r, "stats.html", map[string]any{
@@ -550,6 +566,7 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 			BytesInH:     humanBytes(e.BytesIn),
 			BytesOutH:    humanBytes(e.BytesOut),
 			DurationMS:   e.DurationMS,
+			ConnectMS:    e.ConnectMS,
 		})
 	}
 	clients, _ := g.Store.ListClients(ctx)

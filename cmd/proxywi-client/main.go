@@ -40,6 +40,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		TLSInsecure:    cfg.TLSInsecure,
 		AllowedTargets: cfg.AllowedTargets,
 		DeniedTargets:  cfg.DeniedTargets,
+		DoHProviders:   cfg.DoHProviders,
 		AgentVersion:   version.Version,
 		Log:            log,
 	}

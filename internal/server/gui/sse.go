@@ -81,6 +81,7 @@ func (g *GUI) eventsDashboard(w http.ResponseWriter, r *http.Request) {
 		"client_online":  true,
 		"client_offline": true,
 		"metrics":        true,
+		"client_ping":    true,
 	})
 }
 

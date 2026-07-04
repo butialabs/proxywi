@@ -20,6 +20,7 @@ type Server struct {
 	RateLimitMax    int
 	RateLimitWindow time.Duration
 	BlockCategories []string
+	DoHProviders    []string
 }
 
 type Client struct {
@@ -28,6 +29,7 @@ type Client struct {
 	TLSInsecure    bool
 	AllowedTargets []string
 	DeniedTargets  []string
+	DoHProviders   []string
 }
 
 func LoadServer() (Server, error) {
@@ -43,6 +45,7 @@ func LoadServer() (Server, error) {
 		RateLimitMax:    intEnv("PROXYWI_RATE_LIMIT_MAX", 5),
 		RateLimitWindow: durationEnv("PROXYWI_RATE_LIMIT_WINDOW", time.Second),
 		BlockCategories: splitEnv(os.Getenv("PROXYWI_BLOCK_CATEGORIES")),
+		DoHProviders:    splitEnv(env("PROXYWI_DOH_PROVIDERS", "https://dns.nextdns.io,https://freedns.controld.com/p0")),
 	}
 	return s, nil
 }
@@ -55,6 +58,7 @@ func LoadClient() (Client, error) {
 		TLSInsecure:    boolEnv("PROXYWI_TLS_INSECURE"),
 		AllowedTargets: splitEnv(os.Getenv("PROXYWI_ALLOWED_TARGETS")),
 		DeniedTargets:  splitEnv(os.Getenv("PROXYWI_DENIED_TARGETS")),
+		DoHProviders:  splitEnv(env("PROXYWI_DOH_PROVIDERS", "https://dns.nextdns.io,https://freedns.controld.com/p0")),
 	}
 	if c.Server == "" {
 		return c, fmt.Errorf("PROXYWI_SERVER is required")

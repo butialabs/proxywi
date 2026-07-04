@@ -81,6 +81,7 @@ type tokenLogView struct {
 	Outcome    string
 	BytesInH   string
 	BytesOutH  string
+	ConnectMS  int64
 	DurationMS int64
 }
 
@@ -108,6 +109,7 @@ func (g *GUI) getTokenLogs(w http.ResponseWriter, r *http.Request) {
 			Outcome:    e.Outcome,
 			BytesInH:   humanBytes(e.BytesIn),
 			BytesOutH:  humanBytes(e.BytesOut),
+			ConnectMS:  e.ConnectMS,
 			DurationMS: e.DurationMS,
 		})
 	}
@@ -126,6 +128,7 @@ type domainStatView struct {
 	BytesInH      string
 	BytesOutH     string
 	AvgDurationMS int64
+	AvgConnectMS  int64
 }
 
 func (g *GUI) getTokenStats(w http.ResponseWriter, r *http.Request) {
@@ -160,6 +163,7 @@ func (g *GUI) getTokenStats(w http.ResponseWriter, r *http.Request) {
 			BytesInH:      humanBytes(s.BytesIn),
 			BytesOutH:     humanBytes(s.BytesOut),
 			AvgDurationMS: s.AvgDurationMS,
+			AvgConnectMS:  s.AvgConnectMS,
 		})
 	}
 	g.render(w, r, "token_stats.html", map[string]any{

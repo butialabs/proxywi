@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	internaldns "github.com/butialabs/proxywi/internal/dns"
 	"github.com/butialabs/proxywi/internal/tunnel"
 	"github.com/coder/websocket"
 	"github.com/hashicorp/yamux"
@@ -28,11 +29,14 @@ type Agent struct {
 	TLSInsecure    bool
 	AllowedTargets []string
 	DeniedTargets  []string
+	DoHProviders   []string
 	AgentVersion   string
 	Log            *slog.Logger
 
-	aclOnce sync.Once
-	acl     targetACL
+	aclOnce  sync.Once
+	acl      targetACL
+	resolver *net.Resolver
+	metaMu   sync.Mutex
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -103,7 +107,8 @@ func (a *Agent) Run(ctx context.Context) error {
 	defer func() { _ = metaStream.Close() }()
 
 	var counters counters
-	go a.metaLoop(ctx, metaStream, &counters)
+	go a.metaWriteLoop(ctx, metaStream, &counters)
+	go a.metaReadLoop(ctx, metaStream)
 
 	for {
 		stream, err := session.Accept()
@@ -140,7 +145,8 @@ func (a *Agent) handleStream(ctx context.Context, stream net.Conn, c *counters) 
 		return
 	}
 
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	a.initACL()
+	dialer := &net.Dialer{Timeout: 10 * time.Second, Resolver: a.resolver}
 	target, err := dialer.DialContext(ctx, "tcp", req.Target)
 	if err != nil {
 		_ = tunnel.WriteJSONLine(stream, tunnel.ProxyReply{OK: false, Error: err.Error()})
@@ -169,27 +175,29 @@ func (a *Agent) handleStream(ctx context.Context, stream net.Conn, c *counters) 
 	go func() {
 		n, _ := copyCounted(target, stream)
 		c.bytesOut.Add(n)
-		if cw, ok := target.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
+		halfCloseConn(target)
 		done <- struct{}{}
 	}()
 	go func() {
 		n, _ := copyCounted(stream, target)
 		c.bytesIn.Add(n)
-		if cw, ok := stream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
+		halfCloseConn(stream)
 		done <- struct{}{}
 	}()
 	<-done
 	<-done
 }
 
-func (a *Agent) metaLoop(ctx context.Context, stream net.Conn, c *counters) {
+func (a *Agent) sendMeta(stream net.Conn, msg tunnel.MetaMessage) error {
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return tunnel.WriteJSONLine(stream, msg)
+}
+
+func (a *Agent) metaWriteLoop(ctx context.Context, stream net.Conn, c *counters) {
+	_ = a.sendMeta(stream, tunnel.MetaMessage{Type: "heartbeat"})
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	_ = tunnel.WriteJSONLine(stream, tunnel.MetaMessage{Type: "heartbeat"})
 	var lastIn, lastOut int64
 	for {
 		select {
@@ -205,15 +213,36 @@ func (a *Agent) metaLoop(ctx context.Context, stream net.Conn, c *counters) {
 				ActiveConns: int(c.activeConns.Load()),
 			}
 			lastIn, lastOut = in, out
-			if err := tunnel.WriteJSONLine(stream, msg); err != nil {
+			if err := a.sendMeta(stream, msg); err != nil {
 				return
 			}
 		}
 	}
 }
 
+func (a *Agent) metaReadLoop(ctx context.Context, stream net.Conn) {
+	br := bufio.NewReader(stream)
+	for {
+		var msg tunnel.MetaMessage
+		if err := tunnel.ReadJSONLine(br, &msg); err != nil {
+			return
+		}
+		if msg.Type == "ping" {
+			_ = a.sendMeta(stream, tunnel.MetaMessage{Type: "pong", SentAt: msg.SentAt})
+		}
+	}
+}
+
 func copyCounted(dst io.Writer, src io.Reader) (int64, error) {
 	return io.Copy(dst, src)
+}
+
+func halfCloseConn(c net.Conn) {
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+	} else {
+		_ = c.Close()
+	}
 }
 
 func mustJSON(v any) []byte {
@@ -249,6 +278,11 @@ func (a *Agent) initACL() {
 		}
 		a.acl.allowedNets = parsePrefixes(a.AllowedTargets)
 		a.acl.allowedHosts, a.acl.deniedHosts = parseHosts(a.AllowedTargets), parseHosts(a.DeniedTargets)
+		if len(a.DoHProviders) > 0 {
+			a.resolver = internaldns.NewDoHResolver(a.DoHProviders)
+		} else {
+			a.resolver = net.DefaultResolver
+		}
 	})
 }
 
@@ -306,7 +340,7 @@ func (a *Agent) isTargetAllowed(ctx context.Context, target string) bool {
 		return true
 	}
 
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	addrs, err := a.resolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		// Cannot resolve: treat as external domain unless explicitly denied.
 		return !a.acl.deniedHosts[host]

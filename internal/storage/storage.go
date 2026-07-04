@@ -122,7 +122,7 @@ func (s *Store) AdminByUsername(ctx context.Context, username string) (*Admin, e
 		}
 		return nil, err
 	}
-	a.CreatedAt = time.Unix(ts, 0)
+	a.CreatedAt = time.Unix(ts, 0).UTC()
 	return &a, nil
 }
 
@@ -178,7 +178,7 @@ func (s *Store) ListAdmins(ctx context.Context) ([]Admin, error) {
 		if err := rows.Scan(&a.ID, &a.Username, &a.Email, &a.PasswordHash, &ts); err != nil {
 			return nil, err
 		}
-		a.CreatedAt = time.Unix(ts, 0)
+		a.CreatedAt = time.Unix(ts, 0).UTC()
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -279,6 +279,8 @@ type Client struct {
 	AgentVersion string
 	LastSeen     time.Time
 	CreatedAt    time.Time
+	PingMS       *int64
+	PingedAt     *time.Time
 }
 
 func TokenIDFromToken(token string) string {
@@ -361,7 +363,7 @@ func (s *Store) NormalizeLegacyClientNames(ctx context.Context) error {
 }
 
 func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, token_hash, token_id, COALESCE(agent_version,''), last_seen_at, created_at FROM clients ORDER BY id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, token_hash, token_id, COALESCE(agent_version,''), last_seen_at, created_at, ping_ms, pinged_at FROM clients ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -370,28 +372,46 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 	for rows.Next() {
 		var c Client
 		var last, created int64
-		if err := rows.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &c.AgentVersion, &last, &created); err != nil {
+		var pingMS sql.NullInt64
+		var pingedAt sql.NullInt64
+		if err := rows.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &c.AgentVersion, &last, &created, &pingMS, &pingedAt); err != nil {
 			return nil, err
 		}
-		c.LastSeen = time.Unix(last, 0)
-		c.CreatedAt = time.Unix(created, 0)
+		c.LastSeen = time.Unix(last, 0).UTC()
+		c.CreatedAt = time.Unix(created, 0).UTC()
+		if pingMS.Valid {
+			c.PingMS = &pingMS.Int64
+		}
+		if pingedAt.Valid {
+			t := time.Unix(pingedAt.Int64, 0).UTC()
+			c.PingedAt = &t
+		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
 }
 
 func (s *Store) ClientByID(ctx context.Context, id int64) (*Client, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, token_id, COALESCE(agent_version,''), last_seen_at, created_at FROM clients WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, token_id, COALESCE(agent_version,''), last_seen_at, created_at, ping_ms, pinged_at FROM clients WHERE id = ?`, id)
 	var c Client
 	var last, created int64
-	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &c.AgentVersion, &last, &created); err != nil {
+	var pingMS sql.NullInt64
+	var pingedAt sql.NullInt64
+	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &c.AgentVersion, &last, &created, &pingMS, &pingedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	c.LastSeen = time.Unix(last, 0)
-	c.CreatedAt = time.Unix(created, 0)
+	c.LastSeen = time.Unix(last, 0).UTC()
+	c.CreatedAt = time.Unix(created, 0).UTC()
+	if pingMS.Valid {
+		c.PingMS = &pingMS.Int64
+	}
+	if pingedAt.Valid {
+		t := time.Unix(pingedAt.Int64, 0).UTC()
+		c.PingedAt = &t
+	}
 	return &c, nil
 }
 
@@ -405,8 +425,8 @@ func (s *Store) ClientByTokenID(ctx context.Context, tokenID string) (*Client, e
 		}
 		return nil, err
 	}
-	c.LastSeen = time.Unix(last, 0)
-	c.CreatedAt = time.Unix(created, 0)
+	c.LastSeen = time.Unix(last, 0).UTC()
+	c.CreatedAt = time.Unix(created, 0).UTC()
 	return &c, nil
 }
 
@@ -455,6 +475,13 @@ func (s *Store) DeleteClient(ctx context.Context, id int64) error {
 	return err
 }
 
+func (s *Store) UpdateClientPing(ctx context.Context, id int64, pingMS int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE clients SET ping_ms = ?, pinged_at = ? WHERE id = ?`,
+		pingMS, time.Now().Unix(), id)
+	return err
+}
+
 type User struct {
 	ID           int64
 	Username     string
@@ -495,7 +522,7 @@ func scanUser(row rowScanner) (*User, error) {
 		}
 		return nil, err
 	}
-	u.CreatedAt = time.Unix(created, 0)
+	u.CreatedAt = time.Unix(created, 0).UTC()
 	return &u, nil
 }
 
@@ -512,7 +539,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &created); err != nil {
 			return nil, err
 		}
-		u.CreatedAt = time.Unix(created, 0)
+		u.CreatedAt = time.Unix(created, 0).UTC()
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -566,7 +593,7 @@ func (s *Store) UserUsageStats(ctx context.Context) (map[int64]UserUsage, error)
 		if err := rows.Scan(&uid, &cnt, &last); err != nil {
 			return nil, err
 		}
-		out[uid] = UserUsage{Count: cnt, LastUsed: time.Unix(last, 0)}
+		out[uid] = UserUsage{Count: cnt, LastUsed: time.Unix(last, 0).UTC()}
 	}
 	return out, rows.Err()
 }
@@ -680,6 +707,7 @@ type ProxyEvent struct {
 	BytesIn       int64
 	BytesOut      int64
 	DurationMS    int64
+	ConnectMS     int64
 }
 
 func (s *Store) InsertProxyEvent(ctx context.Context, ev ProxyEvent) (int64, error) {
@@ -698,9 +726,9 @@ func (s *Store) InsertProxyEvent(ctx context.Context, ev ProxyEvent) (int64, err
 		ts = time.Now()
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO proxy_events (ts, user_id, client_id, target_host, protocol, outcome, outcome_reason, bytes_in, bytes_out, duration_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ts.Unix(), userPtr, clientPtr, ev.TargetHost, ev.Protocol, ev.Outcome, ev.OutcomeReason, ev.BytesIn, ev.BytesOut, ev.DurationMS)
+		`INSERT INTO proxy_events (ts, user_id, client_id, target_host, protocol, outcome, outcome_reason, bytes_in, bytes_out, duration_ms, connect_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ts.Unix(), userPtr, clientPtr, ev.TargetHost, ev.Protocol, ev.Outcome, ev.OutcomeReason, ev.BytesIn, ev.BytesOut, ev.DurationMS, ev.ConnectMS)
 	if err != nil {
 		return 0, err
 	}
@@ -769,7 +797,7 @@ func (s *Store) ListProxyEventsFiltered(ctx context.Context, f ProxyEventFilter,
 		`SELECT e.id, e.ts, COALESCE(e.user_id,0), COALESCE(u.username,''),
                 COALESCE(e.client_id,0), COALESCE(c.name,''),
                 e.target_host, e.protocol, e.outcome, e.outcome_reason,
-                e.bytes_in, e.bytes_out, e.duration_ms
+                e.bytes_in, e.bytes_out, e.duration_ms, e.connect_ms
          FROM proxy_events e
          LEFT JOIN users   u ON u.id = e.user_id
          LEFT JOIN clients c ON c.id = e.client_id
@@ -787,10 +815,10 @@ func (s *Store) ListProxyEventsFiltered(ctx context.Context, f ProxyEventFilter,
 		var ts int64
 		if err := rows.Scan(&p.ID, &ts, &p.UserID, &p.Username, &p.ClientID, &p.ClientName,
 			&p.TargetHost, &p.Protocol, &p.Outcome, &p.OutcomeReason,
-			&p.BytesIn, &p.BytesOut, &p.DurationMS); err != nil {
+			&p.BytesIn, &p.BytesOut, &p.DurationMS, &p.ConnectMS); err != nil {
 			return nil, err
 		}
-		p.TS = time.Unix(ts, 0)
+		p.TS = time.Unix(ts, 0).UTC()
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -811,6 +839,7 @@ type DomainStat struct {
 	BytesIn       int64
 	BytesOut      int64
 	AvgDurationMS int64
+	AvgConnectMS  int64
 }
 
 // DomainStats returns per-domain aggregates. clientID=0 returns all clients.
@@ -819,7 +848,7 @@ func (s *Store) DomainStats(ctx context.Context, clientID int64, since time.Time
 	var err error
 	if clientID == 0 {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT target_host, COUNT(*) AS cnt, SUM(bytes_in), SUM(bytes_out), CAST(AVG(duration_ms) AS INTEGER)
+			`SELECT target_host, COUNT(*) AS cnt, SUM(bytes_in), SUM(bytes_out), CAST(AVG(duration_ms) AS INTEGER), CAST(COALESCE(AVG(NULLIF(connect_ms,0)),0) AS INTEGER)
 			 FROM proxy_events
 			 WHERE ts >= ? AND outcome = 'ok'
 			 GROUP BY target_host
@@ -828,7 +857,7 @@ func (s *Store) DomainStats(ctx context.Context, clientID int64, since time.Time
 			since.Unix())
 	} else {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT target_host, COUNT(*) AS cnt, SUM(bytes_in), SUM(bytes_out), CAST(AVG(duration_ms) AS INTEGER)
+			`SELECT target_host, COUNT(*) AS cnt, SUM(bytes_in), SUM(bytes_out), CAST(AVG(duration_ms) AS INTEGER), CAST(COALESCE(AVG(NULLIF(connect_ms,0)),0) AS INTEGER)
 			 FROM proxy_events
 			 WHERE client_id = ? AND ts >= ? AND outcome = 'ok'
 			 GROUP BY target_host
@@ -846,13 +875,14 @@ func (s *Store) DomainStats(ctx context.Context, clientID int64, since time.Time
 		bytesIn       int64
 		bytesOut      int64
 		totalDuration int64
+		totalConnect  int64
 	}
 	byDomain := map[string]*entry{}
 	var order []string
 	for rows.Next() {
 		var host string
-		var cnt, bIn, bOut, avgDur int64
-		if err := rows.Scan(&host, &cnt, &bIn, &bOut, &avgDur); err != nil {
+		var cnt, bIn, bOut, avgDur, avgConnect int64
+		if err := rows.Scan(&host, &cnt, &bIn, &bOut, &avgDur, &avgConnect); err != nil {
 			return nil, err
 		}
 		domain := host
@@ -865,6 +895,7 @@ func (s *Store) DomainStats(ctx context.Context, clientID int64, since time.Time
 		}
 		e := byDomain[domain]
 		e.totalDuration += avgDur * cnt
+		e.totalConnect += avgConnect * cnt
 		e.requests += cnt
 		e.bytesIn += bIn
 		e.bytesOut += bOut
@@ -875,9 +906,10 @@ func (s *Store) DomainStats(ctx context.Context, clientID int64, since time.Time
 	out := make([]DomainStat, 0, len(order))
 	for _, domain := range order {
 		e := byDomain[domain]
-		avg := int64(0)
+		avg, avgConn := int64(0), int64(0)
 		if e.requests > 0 {
 			avg = e.totalDuration / e.requests
+			avgConn = e.totalConnect / e.requests
 		}
 		out = append(out, DomainStat{
 			Domain:        domain,
@@ -885,6 +917,7 @@ func (s *Store) DomainStats(ctx context.Context, clientID int64, since time.Time
 			BytesIn:       e.bytesIn,
 			BytesOut:      e.bytesOut,
 			AvgDurationMS: avg,
+			AvgConnectMS:  avgConn,
 		})
 	}
 	return out, nil
