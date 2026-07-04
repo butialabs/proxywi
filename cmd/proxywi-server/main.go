@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/butialabs/proxywi/internal/config"
+	internaldns "github.com/butialabs/proxywi/internal/dns"
 	"github.com/butialabs/proxywi/internal/server"
 	"github.com/butialabs/proxywi/internal/server/gui"
 	"github.com/butialabs/proxywi/internal/storage"
@@ -33,22 +34,6 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(log)
 
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "admin-set":
-			if err := runAdminSet(os.Args[2:]); err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				os.Exit(1)
-			}
-			return
-		case "help", "-h", "--help":
-			usage()
-			return
-		case "server", "run":
-		default:
-		}
-	}
-
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -58,19 +43,14 @@ func main() {
 	}
 }
 
-func usage() {
-	fmt.Fprintf(os.Stderr, `proxywi-server
-
-usage:
-  proxywi-server                run the full server (GUI + HTTP proxy + SOCKS5 proxy + WSS control)
-  proxywi-server admin-set ...  rotate admin credentials (see --help)
-`)
-}
-
 func run(ctx context.Context, log *slog.Logger) error {
 	cfg, err := config.LoadServer()
 	if err != nil {
 		return err
+	}
+	if len(cfg.DoHProviders) > 0 {
+		net.DefaultResolver = internaldns.NewDoHResolver(cfg.DoHProviders)
+		log.Info("DoH resolver active", "providers", cfg.DoHProviders)
 	}
 	store, err := storage.Open(cfg.DataDir)
 	if err != nil {
