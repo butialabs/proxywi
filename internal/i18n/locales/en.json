@@ -40,6 +40,8 @@
   "token_logs.nav_stats": "Stats",
 
   "stats.title": "Domain statistics",
+  "stats.reset_btn": "Reset statistics",
+  "stats.confirm_reset": "This will permanently delete all statistics data. Continue?",
   "token_stats.title": "Domain statistics",
   "token_stats.period_week": "Last 7 days",
   "token_stats.period_month": "Last 30 days",

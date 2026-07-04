@@ -283,7 +283,7 @@ func (g *GUI) postNewClient(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hash error", http.StatusInternalServerError)
 		return
 	}
-	id, err := g.Store.CreateClient(r.Context(), name, string(hash), storage.TokenIDFromToken(token))
+	id, err := g.Store.CreateClient(r.Context(), name, string(hash), storage.SHA256Token(token), storage.TokenIDFromToken(token))
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
@@ -309,7 +309,7 @@ func (g *GUI) postRegenerateClient(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hash error", http.StatusInternalServerError)
 		return
 	}
-	if err := g.Store.UpdateClientToken(r.Context(), id, string(hash), storage.TokenIDFromToken(token)); err != nil {
+	if err := g.Store.UpdateClientToken(r.Context(), id, string(hash), storage.SHA256Token(token), storage.TokenIDFromToken(token)); err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
@@ -485,10 +485,12 @@ func outcomeTitle(outcome, reason string) string {
 }
 
 const logsPageSize = 20
+const statsPageSize = 20
 
 func (g *GUI) getGlobalStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	period := r.URL.Query().Get("period")
+	q := r.URL.Query()
+	period := q.Get("period")
 	var since time.Time
 	switch period {
 	case "month":
@@ -510,13 +512,47 @@ func (g *GUI) getGlobalStats(w http.ResponseWriter, r *http.Request) {
 			AvgConnectMS:  s.AvgConnectMS,
 		})
 	}
+
+	total := len(views)
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	totalPages := (total + statsPageSize - 1) / statsPageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * statsPageSize
+	end := start + statsPageSize
+	if end > total {
+		end = total
+	}
+
 	g.render(w, r, "stats.html", map[string]any{
-		"Title":  "Stats",
-		"Active": "stats",
-		"User":   g.adminName(ctx),
-		"Stats":  views,
-		"Period": period,
+		"Title":      "Stats",
+		"Active":     "stats",
+		"User":       g.adminName(ctx),
+		"Stats":      views[start:end],
+		"Period":     period,
+		"Page":       page,
+		"TotalPages": totalPages,
+		"PrevPage":   page - 1,
+		"NextPage":   page + 1,
+		"HasPrev":    page > 1,
+		"HasNext":    page < totalPages,
+		"FilterQS":   template.HTML("&period=" + period),
 	})
+}
+
+func (g *GUI) postResetStats(w http.ResponseWriter, r *http.Request) {
+	if _, err := g.Store.PurgeAllProxyEvents(r.Context()); err != nil {
+		http.Error(w, "reset failed", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/stats", http.StatusSeeOther)
 }
 
 

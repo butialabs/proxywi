@@ -1,6 +1,10 @@
 ﻿{{define "content"}}
 <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
   <h3 class="text-xl font-semibold">{{t "stats.title"}}</h3>
+  <form method="post" action="/stats/reset" class="js-confirm" data-confirm="{{t "stats.confirm_reset"}}">
+    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+    <button type="submit" class="px-3 py-1 text-sm border border-red-500/50 text-red-400 hover:bg-red-500/10 hover:border-red-400">{{t "stats.reset_btn"}}</button>
+  </form>
 </div>
 
 <div class="flex gap-2 mb-4">
@@ -37,6 +41,25 @@
       </tbody>
     </table>
   </div>
+  {{if gt .TotalPages 1}}
+  <div class="bg-soft border-t border-border px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+    <span class="text-dim text-sm">{{tp "logs.page_status" .}}</span>
+    <nav>
+      <ul class="flex gap-1">
+        <li class="{{if not .HasPrev}}opacity-40 pointer-events-none{{end}}">
+          <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasPrev}}href="?page={{.PrevPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+            <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#chevron-left"></use></svg> {{t "logs.page_prev"}}
+          </a>
+        </li>
+        <li class="{{if not .HasNext}}opacity-40 pointer-events-none{{end}}">
+          <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasNext}}href="?page={{.NextPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+            {{t "logs.page_next"}} <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#chevron-right"></use></svg>
+          </a>
+        </li>
+      </ul>
+    </nav>
+  </div>
+  {{end}}
 </div>
 {{end}}
 {{template "layout" .}}

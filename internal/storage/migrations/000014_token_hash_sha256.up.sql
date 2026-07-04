@@ -1,0 +1,1 @@
+ALTER TABLE clients ADD COLUMN token_hash_sha256 TEXT NOT NULL DEFAULT '';

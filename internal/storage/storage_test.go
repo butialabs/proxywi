@@ -22,7 +22,7 @@ func TestCreateClient_AndList(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	id, err := s.CreateClient(ctx, "test-client", "hash", "tokenprefix")
+	id, err := s.CreateClient(ctx, "test-client", "hash", "", "tokenprefix")
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestMarkClientSeen_PersistsAgentVersion(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	id, err := s.CreateClient(ctx, "agent", "hash", "tokenprefix")
+	id, err := s.CreateClient(ctx, "agent", "hash", "", "tokenprefix")
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}

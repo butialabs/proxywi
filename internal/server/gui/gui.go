@@ -77,6 +77,7 @@ func (g *GUI) Router() http.Handler {
 			r.Post("/access/{id}/delete", g.postDeleteAccess)
 			r.Get("/logs", g.getLogs)
 			r.Get("/stats", g.getGlobalStats)
+			r.Post("/stats/reset", g.postResetStats)
 			r.Get("/events/dashboard", g.eventsDashboard)
 			r.Get("/events/logs", g.eventsLogs)
 		})

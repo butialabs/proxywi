@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
 	"encoding/hex"
@@ -39,12 +40,27 @@ type tokenCacheEntry struct {
 
 const cacheSessionTTL = 60 // seconds before re-validating from DB
 
+// ClientHashes holds both hash representations for a client token.
+// Bcrypt is kept for backward compatibility with existing rows.
+// SHA256 is the fast-path hash populated for all new or migrated rows.
+type ClientHashes struct {
+	Bcrypt string
+	SHA256 string
+}
+
+// SHA256Token returns hex(sha256(token)). Tokens are random 128-bit strings,
+// so SHA-256 without a salt provides adequate security.
+func SHA256Token(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
+}
+
 type Store struct {
 	db           *sql.DB
 	sessionCache sync.Map // string -> sessionCacheEntry
 	tokenCache   sync.Map // string -> tokenCacheEntry
 	hashCacheMu  sync.RWMutex
-	hashCache    map[int64]string
+	hashCache    map[int64]ClientHashes
 	hashCacheOK  bool
 }
 
@@ -311,15 +327,16 @@ func (s *Store) DeleteTokenSession(ctx context.Context, id string) error {
 }
 
 type Client struct {
-	ID           int64
-	Name         string
-	TokenHash    string
-	TokenID      string
-	AgentVersion string
-	LastSeen     time.Time
-	CreatedAt    time.Time
-	PingMS       *int64
-	PingedAt     *time.Time
+	ID              int64
+	Name            string
+	TokenHash       string
+	TokenHashSHA256 string
+	TokenID         string
+	AgentVersion    string
+	LastSeen        time.Time
+	CreatedAt       time.Time
+	PingMS          *int64
+	PingedAt        *time.Time
 }
 
 func TokenIDFromToken(token string) string {
@@ -332,10 +349,10 @@ func TokenIDFromToken(token string) string {
 	return token
 }
 
-func (s *Store) CreateClient(ctx context.Context, name, tokenHash, tokenID string) (int64, error) {
+func (s *Store) CreateClient(ctx context.Context, name, tokenHash, tokenHashSHA256, tokenID string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO clients (name, token_hash, token_id, created_at) VALUES (?, ?, ?, ?)`,
-		name, tokenHash, tokenID, time.Now().Unix())
+		`INSERT INTO clients (name, token_hash, token_hash_sha256, token_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+		name, tokenHash, tokenHashSHA256, tokenID, time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -432,12 +449,12 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 }
 
 func (s *Store) ClientByID(ctx context.Context, id int64) (*Client, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, token_id, COALESCE(agent_version,''), last_seen_at, created_at, ping_ms, pinged_at FROM clients WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, COALESCE(token_hash_sha256,''), token_id, COALESCE(agent_version,''), last_seen_at, created_at, ping_ms, pinged_at FROM clients WHERE id = ?`, id)
 	var c Client
 	var last, created int64
 	var pingMS sql.NullInt64
 	var pingedAt sql.NullInt64
-	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &c.AgentVersion, &last, &created, &pingMS, &pingedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenHashSHA256, &c.TokenID, &c.AgentVersion, &last, &created, &pingMS, &pingedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -456,10 +473,10 @@ func (s *Store) ClientByID(ctx context.Context, id int64) (*Client, error) {
 }
 
 func (s *Store) ClientByTokenID(ctx context.Context, tokenID string) (*Client, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, token_id, COALESCE(agent_version,''), last_seen_at, created_at FROM clients WHERE token_id = ?`, tokenID)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, token_hash, COALESCE(token_hash_sha256,''), token_id, COALESCE(agent_version,''), last_seen_at, created_at FROM clients WHERE token_id = ?`, tokenID)
 	var c Client
 	var last, created int64
-	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenID, &c.AgentVersion, &last, &created); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &c.TokenHash, &c.TokenHashSHA256, &c.TokenID, &c.AgentVersion, &last, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -470,10 +487,10 @@ func (s *Store) ClientByTokenID(ctx context.Context, tokenID string) (*Client, e
 	return &c, nil
 }
 
-func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]string, error) {
+func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]ClientHashes, error) {
 	s.hashCacheMu.RLock()
 	if s.hashCacheOK {
-		out := make(map[int64]string, len(s.hashCache))
+		out := make(map[int64]ClientHashes, len(s.hashCache))
 		for k, v := range s.hashCache {
 			out[k] = v
 		}
@@ -482,16 +499,16 @@ func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]string, err
 	}
 	s.hashCacheMu.RUnlock()
 
-	rows, err := s.db.QueryContext(ctx, `SELECT id, token_hash FROM clients`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, token_hash, COALESCE(token_hash_sha256,'') FROM clients`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := map[int64]string{}
+	out := map[int64]ClientHashes{}
 	for rows.Next() {
 		var id int64
-		var h string
-		if err := rows.Scan(&id, &h); err != nil {
+		var h ClientHashes
+		if err := rows.Scan(&id, &h.Bcrypt, &h.SHA256); err != nil {
 			return nil, err
 		}
 		out[id] = h
@@ -529,8 +546,16 @@ func (s *Store) UpdateClientName(ctx context.Context, id int64, name string) err
 	return err
 }
 
-func (s *Store) UpdateClientToken(ctx context.Context, id int64, tokenHash, tokenID string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE clients SET token_hash = ?, token_id = ? WHERE id = ?`, tokenHash, tokenID, id)
+func (s *Store) UpdateClientToken(ctx context.Context, id int64, tokenHash, tokenHashSHA256, tokenID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE clients SET token_hash = ?, token_hash_sha256 = ?, token_id = ? WHERE id = ?`, tokenHash, tokenHashSHA256, tokenID, id)
+	if err == nil {
+		s.invalidateHashCache()
+	}
+	return err
+}
+
+func (s *Store) SetClientTokenSHA256(ctx context.Context, id int64, tokenHashSHA256 string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE clients SET token_hash_sha256 = ? WHERE id = ?`, tokenHashSHA256, id)
 	if err == nil {
 		s.invalidateHashCache()
 	}
@@ -896,6 +921,15 @@ func (s *Store) ListProxyEventsFiltered(ctx context.Context, f ProxyEventFilter,
 
 func (s *Store) PurgeProxyEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM proxy_events WHERE ts < ?`, cutoff.Unix())
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func (s *Store) PurgeAllProxyEvents(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM proxy_events`)
 	if err != nil {
 		return 0, err
 	}

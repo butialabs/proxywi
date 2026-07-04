@@ -195,27 +195,47 @@ func (c *Control) readMetaStream(ctx context.Context, agent *Agent) {
 }
 
 func (c *Control) authenticateToken(ctx context.Context, token string) (int64, *storage.Client, error) {
+	sha256h := storage.SHA256Token(token)
+
 	tokenID := storage.TokenIDFromToken(token)
 	if tokenID != "" {
 		cl, err := c.Store.ClientByTokenID(ctx, tokenID)
 		if err != nil {
 			return 0, nil, err
 		}
-		if cl != nil && bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
-			return cl.ID, cl, nil
+		if cl != nil {
+			if cl.TokenHashSHA256 != "" {
+				if cl.TokenHashSHA256 == sha256h {
+					return cl.ID, cl, nil
+				}
+			} else if bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
+				go func() { _ = c.Store.SetClientTokenSHA256(context.Background(), cl.ID, sha256h) }()
+				return cl.ID, cl, nil
+			}
 		}
 	}
+
 	// Fallback for legacy tokens without token_id.
 	hashes, err := c.Store.AllClientTokenHashes(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
 	for id, h := range hashes {
-		if bcrypt.CompareHashAndPassword([]byte(h), []byte(token)) == nil {
+		if h.SHA256 != "" && h.SHA256 == sha256h {
 			cl, err := c.Store.ClientByID(ctx, id)
 			if err != nil || cl == nil {
 				return 0, nil, errors.New("client vanished")
 			}
+			return id, cl, nil
+		}
+	}
+	for id, h := range hashes {
+		if h.SHA256 == "" && bcrypt.CompareHashAndPassword([]byte(h.Bcrypt), []byte(token)) == nil {
+			cl, err := c.Store.ClientByID(ctx, id)
+			if err != nil || cl == nil {
+				return 0, nil, errors.New("client vanished")
+			}
+			go func(clientID int64) { _ = c.Store.SetClientTokenSHA256(context.Background(), clientID, sha256h) }(id)
 			return id, cl, nil
 		}
 	}
