@@ -4,6 +4,7 @@ COPY go.mod go.sum* ./
 RUN go mod download
 COPY cmd/proxywi-server  ./cmd/proxywi-server
 COPY internal/config      ./internal/config
+COPY internal/dns         ./internal/dns
 COPY internal/i18n        ./internal/i18n
 COPY internal/server      ./internal/server
 COPY internal/storage     ./internal/storage
@@ -26,6 +27,6 @@ ENV PROXYWI_DATA_DIR=/data \
 
 VOLUME ["/data"]
 
-EXPOSE 3000 8080 11080
+EXPOSE 3000 8080 1080
 
 ENTRYPOINT ["/usr/bin/proxywi-server"]

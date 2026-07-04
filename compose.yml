@@ -1,21 +1,32 @@
 services:
-  proxywi-caddy:
-    container_name: proxywi-caddy
-    image: ghcr.io/butialabs/proxywi-caddy:latest
+  proxywi-traefik:
+    container_name: proxywi-traefik
+    image: traefik:v3
     restart: unless-stopped
     environment:
-      PROXYWI_DOMAIN: "proxy.example.com"
-      ACME_EMAIL: "email@example.com"
-    volumes:
-      - ./proxywi/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./proxywi/caddy/data:/data
-      - ./proxywi/caddy/config:/config
+      TZ: "UTC"
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=proxywi"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.socks.address=:1080"
+      - "--entrypoints.httpsproxy.address=:8443"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/data/acme.json"
+      - "--certificatesresolvers.le.acme.tlschallenge=true"
+      - "--log.level=INFO"
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"
-      - "8443:8443"
       - "1080:1080"
+      - "8443:8443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./proxywi/traefik:/data
     networks:
       - proxywi
 
@@ -24,12 +35,32 @@ services:
     image: ghcr.io/butialabs/proxywi-server:latest
     restart: unless-stopped
     environment:
+      TZ: "UTC"
       ADMIN_USERNAME: "admin"
       ADMIN_PASSWORD: "change-me"
     volumes:
       - ./proxywi/data:/data
     networks:
       - proxywi
+    labels:
+      - "traefik.enable=true"
+      # GUI
+      - "traefik.http.routers.gui.rule=Host(`${PROXYWI_DOMAIN}`)"
+      - "traefik.http.routers.gui.entrypoints=websecure"
+      - "traefik.http.routers.gui.tls.certresolver=le"
+      - "traefik.http.services.gui.loadbalancer.server.port=3000"
+      # SOCKS5 TCP
+      - "traefik.tcp.routers.socks.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.socks.entrypoints=socks"
+      - "traefik.tcp.services.socks.loadbalancer.server.port=1080"
+      - "traefik.tcp.services.socks.loadbalancer.proxyprotocol.version=2"
+      # HTTPS proxy: TLS on 8443
+      - "traefik.tcp.routers.httpsproxy.rule=HostSNI(`${PROXYWI_DOMAIN}`)"
+      - "traefik.tcp.routers.httpsproxy.entrypoints=httpsproxy"
+      - "traefik.tcp.routers.httpsproxy.tls=true"
+      - "traefik.tcp.routers.httpsproxy.tls.certresolver=le"
+      - "traefik.tcp.services.httpsproxy.loadbalancer.server.port=8080"
+      - "traefik.tcp.services.httpsproxy.loadbalancer.proxyprotocol.version=2"
 
 networks:
   proxywi:

@@ -4,9 +4,9 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/butialabs/proxywi)
 
-Is a cloud proxy pool that lets you route HTTP(S) traffic through a fleet of agents you control. Residential boxes, VPS instances, Raspberry Pis (x64), anything that can run Docker. A single public endpoint handles authentication and picks an agent at random for every new connection, so the outbound IP rotates on its own.
+A cloud proxy pool that routes HTTP(S) and SOCKS5 traffic through a fleet of agents you control, residential boxes, VPS instances, Raspberry Pis, anything that can run Docker. A single public endpoint handles authentication and picks an agent for every new connection, so the outbound IP rotates automatically.
 
-It is the "bring-your-own-IP" proxy setup most scraping and privacy tools assume you already have, packaged as two Docker images and a web GUI.
+Bring-your-own-IP proxy setup packaged as two Docker images and a web GUI.
 
 ---
 
@@ -15,11 +15,11 @@ It is the "bring-your-own-IP" proxy setup most scraping and privacy tools assume
 ```
                          proxywi.example.com
         ┌─────────────────────┐    ┌──────────────────────────────────────┐
-        │   proxywi-caddy     │    │          proxywi-server              │
+        │   proxywi-traefik   │    │          proxywi-server              │
         │  :443  GUI + wss  ──┼───►│  :3000  Admin UI + WS control        │
         │  :8443 HTTPS proxy ─┼───►│  :8080  HTTP forward proxy           │
         │  :1080 SOCKS5      ─┼───►│  :1080  SOCKS5 proxy                 │
-        │  :80   ACME         │    │         (PROXY protocol → real IP)   │
+        │  :80   ACME (HTTP)  │    │                                      │
         └─────────────────────┘    └──────────────────────────────────────┘
                  ▲ wss (agents dial out)        ▲ yamux stream per
                  │                              │ proxied connection
@@ -28,10 +28,10 @@ It is the "bring-your-own-IP" proxy setup most scraping and privacy tools assume
    (home, BR)                (VPS, DE)              …
 ```
 
-- **`proxywi-caddy`** handles TLS termination, ACME certificate renewal, and PROXY protocol forwarding
-- **`proxywi-server`** runs the proxy logic and admin GUI
-- **Agents** run the client image. They dial *out* over `wss://` to `/ws/control` (so they work behind NAT/firewall without port-forwarding), finish a **token-only** handshake, and multiplex proxy streams over the tunnel with **yamux**
-- When someone hits `user:pass@proxywi.example.com:8443` (HTTPS proxy) or `user:pass@proxywi.example.com:1080` (SOCKS5), the server authenticates them, picks a random online agent, opens a new yamux stream to that agent over the long-lived control tunnel
+- **`proxywi-traefik`** handles TLS termination via Let's Encrypt, HTTP-HTTPS redirect, PROXY protocol forwarding, and TCP passthrough for SOCKS5/HTTPS proxy ports.
+- **`proxywi-server`** runs the proxy logic and admin GUI.
+- **Agents** run the client image. They dial *out* over `wss://` to `/ws/control` (works behind NAT/firewall, no port-forwarding needed), authenticate with a token, and multiplex proxy streams over the tunnel using **yamux**.
+- When a client hits `user:pass@proxywi.example.com:8443` or `:1080`, the server authenticates, picks a random online agent, opens a new yamux stream over the long-lived control tunnel, and proxies the connection.
 
 ---
 
@@ -39,28 +39,46 @@ It is the "bring-your-own-IP" proxy setup most scraping and privacy tools assume
 
 ### 1. Run the server
 
+Create a `.env` file:
+
 ```bash
-nano compose.yml
+PROXYWI_DOMAIN=proxy.example.com
+ACME_EMAIL=email@example.com
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-me
 ```
+
+Create `compose.yml`:
+
 ```yaml
 services:
-  proxywi-caddy:
-    container_name: proxywi-caddy
-    image: ghcr.io/butialabs/proxywi-caddy:latest
+  proxywi-traefik:
+    container_name: proxywi-traefik
+    image: traefik:v3
     restart: unless-stopped
     environment:
-      PROXYWI_DOMAIN: "proxy.example.com"
-      ACME_EMAIL: "email@example.com"
-    volumes:
-      - ./proxywi/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./proxywi/caddy/data:/data
-      - ./proxywi/caddy/config:/config
+      TZ: "UTC"
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=proxywi"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.socks.address=:1080"
+      - "--entrypoints.httpsproxy.address=:8443"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/data/acme.json"
+      - "--certificatesresolvers.le.acme.tlschallenge=true"
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"
-      - "8443:8443"
       - "1080:1080"
+      - "8443:8443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./proxywi/traefik:/data
     networks:
       - proxywi
 
@@ -69,86 +87,87 @@ services:
     image: ghcr.io/butialabs/proxywi-server:latest
     restart: unless-stopped
     environment:
-      ADMIN_USERNAME: "admin"
-      ADMIN_PASSWORD: "change-me"
+      TZ: "UTC"
+      ADMIN_USERNAME: "${ADMIN_USERNAME}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      PROXYWI_DOMAIN: "${PROXYWI_DOMAIN}"
     volumes:
       - ./proxywi/data:/data
     networks:
       - proxywi
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gui.rule=Host(`${PROXYWI_DOMAIN}`)"
+      - "traefik.http.routers.gui.entrypoints=websecure"
+      - "traefik.http.routers.gui.tls.certresolver=le"
+      - "traefik.http.services.gui.loadbalancer.server.port=3000"
+      - "traefik.tcp.routers.socks.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.socks.entrypoints=socks"
+      - "traefik.tcp.services.socks.loadbalancer.server.port=1080"
+      - "traefik.tcp.services.socks.loadbalancer.proxyprotocol.version=2"
+      - "traefik.tcp.routers.httpsproxy.rule=HostSNI(`${PROXYWI_DOMAIN}`)"
+      - "traefik.tcp.routers.httpsproxy.entrypoints=httpsproxy"
+      - "traefik.tcp.routers.httpsproxy.tls=true"
+      - "traefik.tcp.routers.httpsproxy.tls.certresolver=le"
+      - "traefik.tcp.services.httpsproxy.loadbalancer.server.port=8080"
+      - "traefik.tcp.services.httpsproxy.loadbalancer.proxyprotocol.version=2"
 
 networks:
   proxywi:
     name: proxywi
     driver: bridge
 ```
-```bash
-docker compose -f compose.yml up -d
-```
-
-The `proxywi-caddy` service expects a Caddyfile at `./proxywi/caddy/Caddyfile`. Copy the default from the repo:
 
 ```bash
-mkdir -p ./proxywi/caddy
-cp docker/caddy/Caddyfile ./proxywi/caddy/Caddyfile
+docker compose up -d
 ```
 
 ### 2. Enroll an agent
 
-In the GUI, go to **Clients → Add client**. The agent gets an automatic 3-word name; the server shows the token *once* and offers a `docker-compose.yml` tailored to that client
+In the GUI go to **Clients > Add client**. The agent gets a random 3-word name. The server shows the token once and offers a ready-to-use `docker-compose.yml` for that agent.
 
 ### 3. Create a proxy user
 
-**Proxy Access → New access**!
+**Proxy Access > New access**
 
 ### 4. Use the proxy
 
 ```bash
-# HTTP forward proxy over TLS (HTTPS proxy)
-curl -x https://user:pass@proxywi.example.com:8443 https://ifconfig.me/ip
-
 # SOCKS5
-curl -x socks5h://user:pass@proxywi.example.com:1080 https://ifconfig.me/ip
+curl --socks5 user:pass@proxywi.example.com:1080 https://ifconfig.me/ip
+
+# HTTP CONNECT proxy over TLS
+curl -x https://user:pass@proxywi.example.com:8443 https://ifconfig.me/ip
 ```
 
-Run it 10 times in a loop: each call exits through a different agent.
+Run it 10 times in a loop, each call exits through a different agent, different IP.
 
 ---
 
 ## Configuration
 
-### proxywi-caddy
-
-| Variable         | Default    | Purpose |
-|------------------|------------|---------|
-| `PROXYWI_DOMAIN` | *required* | Public hostname. Used by Caddy for automatic HTTPS. |
-| `ACME_EMAIL`     | *required* | Let's Encrypt contact email. |
-
-The Caddyfile mounts at `/etc/caddy/Caddyfile`. Edit it to change upstream ports, add TLS options, or configure DNS challenge providers.
-
 ### proxywi-server
 
-| Variable                    | Default    | Purpose |
-|-----------------------------|------------|---------|
-| `PROXYWI_PORT`              | `3000`     | Admin GUI + WS control plane listener. |
-| `PROXYWI_PROXY_HTTP_PORT`   | `8080`     | HTTP forward-proxy listener (Caddy publishes `8443` over TLS). |
-| `PROXYWI_PROXY_SOCKET_PORT` | `1080`     | SOCKS5 listener (Caddy publishes `1080`). |
-| `PROXYWI_PROXY_PROTOCOL`    | `true`     | Accept the PROXY protocol on proxy listeners so the real client IP survives Caddy. Only enable behind a trusted L4 terminator. |
-| `PROXYWI_DATA_DIR`          | `./data`   | Where SQLite data lives. |
-| `ADMIN_USERNAME`            | *required* | Initial administrator username. Created on first start if no admin exists. |
-| `ADMIN_PASSWORD`            | *required* | Initial administrator password (min. 8 characters). |
-| `PROXYWI_RATE_LIMIT_MAX`    | `5`        | Max proxy requests per user per window. |
-| `PROXYWI_RATE_LIMIT_WINDOW` | `1s`       | Rate-limit window duration (`500ms`, `2s`, `1m`, etc.). |
-| `PROXYWI_BLOCK_CATEGORIES`  | *(unset)*  | Comma-separated list of domain categories to block on all proxy connections. Supported values: `adult`, `gambling`, `crypto`. Lists are downloaded from public blocklists on startup and refreshed weekly. Example: `adult,gambling`. |
+| Variable                    | Default                                       | Purpose |
+|-----------------------------|-----------------------------------------------|---------|
+| `PROXYWI_PORT`              | `3000`                                        | Admin GUI and WS control plane. |
+| `PROXYWI_PROXY_HTTP_PORT`   | `8080`                                        | HTTP forward-proxy listener (Traefik publishes `:8443`) |
+| `PROXYWI_PROXY_SOCKET_PORT` | `1080`                                        | SOCKS5 listener. |
+| `PROXYWI_PROXY_PROTOCOL`    | `false`                                       | Accept PROXY protocol on proxy listeners (set `true` behind Traefik to get real client IPs) |
+| `PROXYWI_DATA_DIR`          | `./data`                                      | SQLite database directory. |
+| `ADMIN_USERNAME`            | *required*                                    | Initial admin username |
+| `ADMIN_PASSWORD`            | *required*                                    | Initial admin password (min 8 chars) |
+| `PROXYWI_DOMAIN`            | *(unset)*                                     | Public hostname, used for PROXY protocol IP resolution. |
+| `PROXYWI_RATE_LIMIT_MAX`    | `5`                                           | Max proxy requests per user per window |
+| `PROXYWI_RATE_LIMIT_WINDOW` | `1s`                                          | Rate-limit window (`500ms`, `2s`, `1m`, etc.) |
+| `PROXYWI_BLOCK_CATEGORIES`  | *(unset)*                                     | Comma-separated domain categories to block: `adult`, `gambling`, `crypto`. Lists fetched on startup and refreshed weekly |
 
-> `proxywi-server` is not exposed to the host directly — all traffic goes through `proxywi-caddy` on the shared Docker network.
+### proxywi-client (agent)
 
-### Client / agent
-
-| Variable                | Default    | Purpose |
-|-------------------------|------------|---------|
-| `PROXYWI_SERVER`        | *required* | e.g. `wss://proxywi.example.com` (Caddy terminates TLS on `:443`). |
-| `PROXYWI_TOKEN`         | *required* | Token from the GUI, shown once at enrollment. This is the only credential the agent needs. |
-| `PROXYWI_TLS_INSECURE`  | `false`    | Skip TLS verification when dialing the control plane over `wss://` behind a self-signed reverse proxy. |
+| Variable                  | Default                                       | Purpose |
+|---------------------------|-----------------------------------------------|---------|
+| `PROXYWI_SERVER`          | *required*                                    | Control plane URL, e.g. `wss://proxywi.example.com`. |
+| `PROXYWI_TOKEN`           | *required*                                    | Agent token from the GUI. Shown once at enrollment. |
 
 ---
 
