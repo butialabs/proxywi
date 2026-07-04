@@ -18,6 +18,15 @@ services:
       - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
       - "--certificatesresolvers.le.acme.storage=/data/acme.json"
       - "--certificatesresolvers.le.acme.tlschallenge=true"
+      - "--providers.file.filename=/data/dynamic.yml"
+      - "--providers.file.watch=true"
+      - "--entrypoints.websecure.http.encodedCharacters.allowEncodedSlash=false"
+      - "--entrypoints.websecure.http.encodedCharacters.allowEncodedBackSlash=false"
+      - "--entrypoints.websecure.http.encodedCharacters.allowEncodedNullCharacter=false"
+      - "--entrypoints.websecure.http.encodedCharacters.allowEncodedSemicolon=false"
+      - "--entrypoints.websecure.http.encodedCharacters.allowEncodedPercent=false"
+      - "--entrypoints.websecure.http.encodedCharacters.allowEncodedQuestionMark=false"
+      - "--entrypoints.websecure.http.encodedCharacters.allowEncodedHash=false"
       - "--log.level=INFO"
     ports:
       - "80:80"
@@ -52,15 +61,17 @@ services:
       # SOCKS5 TCP
       - "traefik.tcp.routers.socks.rule=HostSNI(`*`)"
       - "traefik.tcp.routers.socks.entrypoints=socks"
+      - "traefik.tcp.routers.socks.service=socks"
       - "traefik.tcp.services.socks.loadbalancer.server.port=1080"
-      - "traefik.tcp.services.socks.loadbalancer.proxyprotocol.version=2"
+      - "traefik.tcp.services.socks.loadbalancer.serversTransport=socks-transport@file"
       # HTTPS proxy: TLS on 8443
       - "traefik.tcp.routers.httpsproxy.rule=HostSNI(`${PROXYWI_DOMAIN}`)"
       - "traefik.tcp.routers.httpsproxy.entrypoints=httpsproxy"
+      - "traefik.tcp.routers.httpsproxy.service=httpsproxy"
       - "traefik.tcp.routers.httpsproxy.tls=true"
       - "traefik.tcp.routers.httpsproxy.tls.certresolver=le"
       - "traefik.tcp.services.httpsproxy.loadbalancer.server.port=8080"
-      - "traefik.tcp.services.httpsproxy.loadbalancer.proxyprotocol.version=2"
+      - "traefik.tcp.services.httpsproxy.loadbalancer.serversTransport=httpsproxy-transport@file"
 
 networks:
   proxywi:

@@ -1,0 +1,8 @@
+tcp:
+  serversTransports:
+    socks-transport:
+      proxyProtocol:
+        version: 2
+    httpsproxy-transport:
+      proxyProtocol:
+        version: 2

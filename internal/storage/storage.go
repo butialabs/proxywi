@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	petname "github.com/dustinkirkland/golang-petname"
@@ -24,8 +25,27 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
+type sessionCacheEntry struct {
+	adminID   int64
+	expiresAt int64
+	cachedAt  int64
+}
+
+type tokenCacheEntry struct {
+	clientID  int64
+	expiresAt int64
+	cachedAt  int64
+}
+
+const cacheSessionTTL = 60 // seconds before re-validating from DB
+
 type Store struct {
-	db *sql.DB
+	db           *sql.DB
+	sessionCache sync.Map // string -> sessionCacheEntry
+	tokenCache   sync.Map // string -> tokenCacheEntry
+	hashCacheMu  sync.RWMutex
+	hashCache    map[int64]string
+	hashCacheOK  bool
 }
 
 func Open(dataDir string) (*Store, error) {
@@ -33,14 +53,14 @@ func Open(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 	path := filepath.Join(dataDir, "proxywi.db")
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
+	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-65536)&_pragma=temp_store(MEMORY)&_pragma=mmap_size(268435456)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxLifetime(0)
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
@@ -219,8 +239,15 @@ func (s *Store) CreateSession(ctx context.Context, adminID int64, ttl time.Durat
 }
 
 func (s *Store) LookupSession(ctx context.Context, id string) (int64, bool, error) {
-	var adminID int64
-	var exp int64
+	now := time.Now().Unix()
+	if v, ok := s.sessionCache.Load(id); ok {
+		e := v.(sessionCacheEntry)
+		if now < e.expiresAt && now-e.cachedAt < cacheSessionTTL {
+			return e.adminID, true, nil
+		}
+		s.sessionCache.Delete(id)
+	}
+	var adminID, exp int64
 	err := s.db.QueryRowContext(ctx, `SELECT admin_id, expires_at FROM admin_sessions WHERE id = ?`, id).Scan(&adminID, &exp)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
@@ -228,14 +255,16 @@ func (s *Store) LookupSession(ctx context.Context, id string) (int64, bool, erro
 	if err != nil {
 		return 0, false, err
 	}
-	if time.Now().Unix() > exp {
+	if now > exp {
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM admin_sessions WHERE id = ?`, id)
 		return 0, false, nil
 	}
+	s.sessionCache.Store(id, sessionCacheEntry{adminID: adminID, expiresAt: exp, cachedAt: now})
 	return adminID, true, nil
 }
 
 func (s *Store) DeleteSession(ctx context.Context, id string) error {
+	s.sessionCache.Delete(id)
 	_, err := s.db.ExecContext(ctx, `DELETE FROM admin_sessions WHERE id = ?`, id)
 	return err
 }
@@ -251,6 +280,14 @@ func (s *Store) CreateTokenSession(ctx context.Context, clientID int64, ttl time
 }
 
 func (s *Store) LookupTokenSession(ctx context.Context, id string) (int64, bool, error) {
+	now := time.Now().Unix()
+	if v, ok := s.tokenCache.Load(id); ok {
+		e := v.(tokenCacheEntry)
+		if now < e.expiresAt && now-e.cachedAt < cacheSessionTTL {
+			return e.clientID, true, nil
+		}
+		s.tokenCache.Delete(id)
+	}
 	var clientID, exp int64
 	err := s.db.QueryRowContext(ctx, `SELECT client_id, expires_at FROM token_sessions WHERE id = ?`, id).Scan(&clientID, &exp)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -259,14 +296,16 @@ func (s *Store) LookupTokenSession(ctx context.Context, id string) (int64, bool,
 	if err != nil {
 		return 0, false, err
 	}
-	if time.Now().Unix() > exp {
+	if now > exp {
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM token_sessions WHERE id = ?`, id)
 		return 0, false, nil
 	}
+	s.tokenCache.Store(id, tokenCacheEntry{clientID: clientID, expiresAt: exp, cachedAt: now})
 	return clientID, true, nil
 }
 
 func (s *Store) DeleteTokenSession(ctx context.Context, id string) error {
+	s.tokenCache.Delete(id)
 	_, err := s.db.ExecContext(ctx, `DELETE FROM token_sessions WHERE id = ?`, id)
 	return err
 }
@@ -300,6 +339,7 @@ func (s *Store) CreateClient(ctx context.Context, name, tokenHash, tokenID strin
 	if err != nil {
 		return 0, err
 	}
+	s.invalidateHashCache()
 	return res.LastInsertId()
 }
 
@@ -431,6 +471,17 @@ func (s *Store) ClientByTokenID(ctx context.Context, tokenID string) (*Client, e
 }
 
 func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]string, error) {
+	s.hashCacheMu.RLock()
+	if s.hashCacheOK {
+		out := make(map[int64]string, len(s.hashCache))
+		for k, v := range s.hashCache {
+			out[k] = v
+		}
+		s.hashCacheMu.RUnlock()
+		return out, nil
+	}
+	s.hashCacheMu.RUnlock()
+
 	rows, err := s.db.QueryContext(ctx, `SELECT id, token_hash FROM clients`)
 	if err != nil {
 		return nil, err
@@ -445,7 +496,20 @@ func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]string, err
 		}
 		out[id] = h
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	s.hashCacheMu.Lock()
+	s.hashCache = out
+	s.hashCacheOK = true
+	s.hashCacheMu.Unlock()
+	return out, nil
+}
+
+func (s *Store) invalidateHashCache() {
+	s.hashCacheMu.Lock()
+	s.hashCacheOK = false
+	s.hashCacheMu.Unlock()
 }
 
 func (s *Store) MarkClientSeen(ctx context.Context, id int64, agentVersion string) error {
@@ -467,11 +531,17 @@ func (s *Store) UpdateClientName(ctx context.Context, id int64, name string) err
 
 func (s *Store) UpdateClientToken(ctx context.Context, id int64, tokenHash, tokenID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE clients SET token_hash = ?, token_id = ? WHERE id = ?`, tokenHash, tokenID, id)
+	if err == nil {
+		s.invalidateHashCache()
+	}
 	return err
 }
 
 func (s *Store) DeleteClient(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM clients WHERE id = ?`, id)
+	if err == nil {
+		s.invalidateHashCache()
+	}
 	return err
 }
 
