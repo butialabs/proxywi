@@ -1,11 +1,11 @@
-{{define "content"}}
+﻿{{define "content"}}
 <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-  <h3 class="text-xl font-semibold">{{t "dashboard.title"}}</h3>
+  <h3 class="text-xl font-semibold flex items-center gap-2"><span class="rounded-full bg-accent live-dot inline-block w-2 h-2 shrink-0"></span>{{t "dashboard.title"}}</h3>
   <form class="flex items-center gap-2" method="get" action="/">
     <select name="period" class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-auto">
       {{range .PeriodOptions}}<option value="{{.Value}}" {{if eq .Value $.FilterPeriod}}selected{{end}}>{{.Label}}</option>{{end}}
     </select>
-    <button class="inline-flex items-center gap-1 bg-accent text-bg px-2.5 py-2 text-sm font-medium hover:bg-accent-hi" type="submit" title="apply"><i class="bi bi-arrow-clockwise"></i></button>
+    <button class="inline-flex items-center gap-1 bg-accent text-bg px-2.5 py-2 text-sm font-medium hover:bg-accent-hi" type="submit" title="apply"><svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#arrow-path"></use></svg></button>
   </form>
 </div>
 
@@ -14,9 +14,9 @@
     <div class="flex items-center">
       <div class="grow">
         <div class="text-dim text-xs uppercase">{{t "dashboard.online_clients"}}</div>
-        <div class="text-2xl font-semibold text-accent tabular-nums">{{.OnlineCount}}<span class="text-dim text-base"> / {{.TotalClients}}</span></div>
+        <div class="text-2xl font-semibold text-accent tabular-nums"><span id="dash-online-count">{{.OnlineCount}}</span><span class="text-dim text-base"> / {{.TotalClients}}</span></div>
       </div>
-      <i class="bi bi-hdd-network text-4xl text-accent opacity-50"></i>
+      <svg class="w-9 h-9 text-accent opacity-50" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#server"></use></svg>
     </div>
   </div></div></div>
   <div><div class="bg-panel border border-border p-0 h-full"><div class="p-4">
@@ -25,7 +25,7 @@
         <div class="text-dim text-xs uppercase">{{t "dashboard.bytes_in"}}</div>
         <div class="text-2xl font-semibold tabular-nums">{{.BytesInHuman}}</div>
       </div>
-      <i class="bi bi-arrow-down-circle text-4xl text-info opacity-50"></i>
+      <svg class="w-9 h-9 text-info opacity-50" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#arrow-down-circle"></use></svg>
     </div>
   </div></div></div>
   <div><div class="bg-panel border border-border p-0 h-full"><div class="p-4">
@@ -34,7 +34,7 @@
         <div class="text-dim text-xs uppercase">{{t "dashboard.bytes_out"}}</div>
         <div class="text-2xl font-semibold tabular-nums">{{.BytesOutHuman}}</div>
       </div>
-      <i class="bi bi-arrow-up-circle text-4xl text-accent opacity-50"></i>
+      <svg class="w-9 h-9 text-accent opacity-50" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#arrow-up-circle"></use></svg>
     </div>
   </div></div></div>
 </div>

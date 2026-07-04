@@ -1,4 +1,4 @@
-{{define "content"}}
+﻿{{define "content"}}
 <div id="access-page" data-proxy-host="{{.ProxyHost}}"
      data-title-new="{{t "access.modal_title"}}"
      data-title-edit="{{t "access.edit_modal_title"}}"
@@ -9,7 +9,7 @@
 
   <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
     <h3 class="text-xl font-semibold">{{t "access.title"}}</h3>
-    <button id="access-new" class="inline-flex items-center gap-1 bg-accent text-bg px-3 py-1.5 text-sm font-medium hover:bg-accent-hi"><i class="bi bi-plus-lg"></i>{{t "access.new"}}</button>
+    <button id="access-new" class="inline-flex items-center gap-1 bg-accent text-bg px-3 py-1.5 text-sm font-medium hover:bg-accent-hi"><svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#plus"></use></svg>{{t "access.new"}}</button>
   </div>
 
   <div class="bg-panel border border-border">
@@ -34,15 +34,15 @@
             <td class="px-3 py-2 text-right whitespace-nowrap">
               <button type="button" class="js-show-proxy inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5"
                       title="{{t "access.action_proxy_url"}}" data-username="{{.Username}}">
-                <i class="bi bi-link-45deg"></i>
+                <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#link"></use></svg>
               </button>
               <button type="button" class="js-edit-access inline-flex items-center gap-1 border border-accent/55 text-accent px-2 py-1 text-sm hover:bg-accent/10"
                       title="{{t "access.action_edit"}}" data-id="{{.ID}}" data-username="{{.Username}}">
-                <i class="bi bi-pencil"></i>
+                <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#pencil"></use></svg>
               </button>
               <form method="post" action="/access/{{.ID}}/delete" class="inline js-confirm" data-confirm="{{tp "access.confirm_delete" .}}">
                 <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
-                <button class="inline-flex items-center gap-1 border border-danger/55 text-danger px-2 py-1 text-sm hover:bg-danger/10" title="{{t "access.action_delete"}}"><i class="bi bi-trash"></i></button>
+                <button class="inline-flex items-center gap-1 border border-danger/55 text-danger px-2 py-1 text-sm hover:bg-danger/10" title="{{t "access.action_delete"}}"><svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#trash"></use></svg></button>
               </form>
             </td>
           </tr>
@@ -60,9 +60,12 @@
       <form id="access-form" method="post" action="/access/new">
         <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
         <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium">
-          <i id="access-modal-icon" class="bi bi-plus-circle"></i>
+          <span id="access-modal-icon">
+            <svg id="access-icon-new" class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#plus-circle"></use></svg>
+            <svg id="access-icon-edit" class="w-4 h-4 hidden" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#pencil"></use></svg>
+          </span>
           <span id="access-modal-title">{{t "access.modal_title"}}</span>
-          <button type="button" class="js-close-modal ml-auto text-dim hover:text-fg"><i class="bi bi-x-lg"></i></button>
+          <button type="button" class="js-close-modal ml-auto text-dim hover:text-fg"><svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#x-mark"></use></svg></button>
         </div>
         <div class="p-4 flex flex-col gap-3">
           <div>
@@ -85,8 +88,8 @@
   <div id="proxy-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 overflow-auto">
     <div class="proxy-modal-content bg-panel border border-border w-full max-w-xl mt-10">
       <div class="bg-soft border-b border-border px-4 py-2 flex items-center gap-2 font-medium">
-        <i class="bi bi-link-45deg"></i>{{t "access.proxy_modal_title"}}
-        <button type="button" class="js-close-modal ml-auto text-dim hover:text-fg"><i class="bi bi-x-lg"></i></button>
+        <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#link"></use></svg>{{t "access.proxy_modal_title"}}
+        <button type="button" class="js-close-modal ml-auto text-dim hover:text-fg"><svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#x-mark"></use></svg></button>
       </div>
       <div class="p-4 flex flex-col gap-3">
         <p class="text-dim text-sm">{{t "access.proxy_hint"}}</p>

@@ -1,4 +1,4 @@
-{{define "content"}}
+﻿{{define "content"}}
 <div class="mb-4">
   <h3 class="text-xl font-semibold">{{t "token_logs.title"}}</h3>
 </div>
@@ -15,6 +15,7 @@
           <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_target"}}</th>
           <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_in"}}</th>
           <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_out"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_connect"}}</th>
           <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_duration"}}</th>
         </tr>
       </thead>
@@ -22,19 +23,20 @@
       {{range .Events}}
         <tr class="border-b border-border hover:bg-accent/5">
           <td class="px-3 py-2 text-dim text-xs font-mono">{{.TSHuman}}</td>
-          <td class="px-3 py-2">
-            {{if eq .Outcome "ok"}}<span title="Ok" class="inline-flex items-center gap-1 text-accent"><i class="bi bi-check-circle mr-1"></i></span>
-            {{else if eq .Outcome "denied"}}<span title="Denied" class="inline-flex items-center gap-1 text-amber"><i class="bi bi-slash-circle mr-1"></i></span>
-            {{else}}<span title="{{.Outcome}}" class="inline-flex items-center gap-1 text-danger"><i class="bi bi-x-circle mr-1"></i></span>{{end}}
+          <td class="px-3 py-2 text-center">
+            {{if eq .Outcome "ok"}}<span title="Ok" class="inline-flex items-center gap-1 text-accent"><svg class="w-4 h-4 mr-1" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#check-circle"></use></svg></span>
+            {{else if eq .Outcome "denied"}}<span title="Denied" class="inline-flex items-center gap-1 text-amber"><svg class="w-4 h-4 mr-1" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#no-symbol"></use></svg></span>
+            {{else}}<span title="{{.Outcome}}" class="inline-flex items-center gap-1 text-danger"><svg class="w-4 h-4 mr-1" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#x-circle"></use></svg></span>{{end}}
           </td>
           <td class="px-3 py-2"><span class="inline-flex items-center gap-1 text-dim">{{.Protocol}}</span></td>
           <td class="px-3 py-2 truncate max-w-[360px]"><code class="font-mono text-accent-hi">{{.Target}}</code></td>
           <td class="px-3 py-2 text-right font-mono">{{.BytesInH}}</td>
           <td class="px-3 py-2 text-right font-mono">{{.BytesOutH}}</td>
+          <td class="px-3 py-2 text-right font-mono text-dim">{{if .ConnectMS}}{{.ConnectMS}} ms{{else}}&mdash;{{end}}</td>
           <td class="px-3 py-2 text-right font-mono text-dim">{{.DurationMS}} ms</td>
         </tr>
       {{else}}
-        <tr><td colspan="7" class="text-center text-dim p-4"><i class="bi bi-inbox text-3xl block mb-2 opacity-50"></i>{{t "logs.empty"}}</td></tr>
+        <tr><td colspan="8" class="text-center text-dim p-4"><svg class="w-8 h-8 block mb-2 opacity-50 mx-auto" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#inbox"></use></svg>{{t "logs.empty"}}</td></tr>
       {{end}}
       </tbody>
     </table>

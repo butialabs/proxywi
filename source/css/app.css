@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "bootstrap-icons/font/bootstrap-icons.css";
 
 @source "../../internal/server/gui/templates";
 
@@ -29,11 +28,6 @@
   src: url("/dist/fonts/roboto-latin-wght-normal.woff2") format("woff2");
 }
 
-@font-face {
-  font-family: "bootstrap-icons";
-  src: url("/dist/fonts/bootstrap-icons.woff2") format("woff2");
-}
-
 body {
   background: var(--color-bg);
   color: var(--color-fg);
@@ -49,6 +43,11 @@ textarea.compose {
   white-space: pre;
 }
 
-[x-cloak] {
-  display: none !important;
+@keyframes live-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+.live-dot {
+  animation: live-dot 2s ease-in-out infinite;
 }

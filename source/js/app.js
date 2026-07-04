@@ -11,12 +11,14 @@
     var toggle = document.getElementById('nav-toggle');
     var mobile = document.getElementById('nav-mobile');
     if (!toggle || !mobile) return;
-    var icon = toggle.querySelector('i');
+    var iconOpen = document.getElementById('nav-icon-open');
+    var iconClose = document.getElementById('nav-icon-close');
 
     function closeMenu() {
       mobile.classList.add('hidden');
       mobile.classList.remove('flex');
-      if (icon) { icon.classList.remove('bi-x-lg'); icon.classList.add('bi-list'); }
+      if (iconOpen) iconOpen.classList.remove('hidden');
+      if (iconClose) iconClose.classList.add('hidden');
     }
 
     toggle.addEventListener('click', function (e) {
@@ -24,7 +26,8 @@
       if (mobile.classList.contains('hidden')) {
         mobile.classList.remove('hidden');
         mobile.classList.add('flex');
-        if (icon) { icon.classList.remove('bi-list'); icon.classList.add('bi-x-lg'); }
+        if (iconOpen) iconOpen.classList.add('hidden');
+        if (iconClose) iconClose.classList.remove('hidden');
       } else {
         closeMenu();
       }
@@ -146,7 +149,8 @@
 
     var form = document.getElementById('access-form');
     var modalTitle = document.getElementById('access-modal-title');
-    var modalIcon = document.getElementById('access-modal-icon');
+    var modalIconNew = document.getElementById('access-icon-new');
+    var modalIconEdit = document.getElementById('access-icon-edit');
     var usernameInput = document.getElementById('access-username');
     var passwordInput = document.getElementById('access-password');
     var passwordLabel = document.getElementById('access-password-label');
@@ -162,7 +166,8 @@
       if (isEdit) {
         form.action = '/access/' + id + '/edit';
         modalTitle.textContent = i18n.titleEdit || 'Edit access';
-        modalIcon.className = 'bi bi-pencil';
+        if (modalIconNew) modalIconNew.classList.add('hidden');
+        if (modalIconEdit) modalIconEdit.classList.remove('hidden');
         usernameInput.value = username || '';
         passwordInput.value = '';
         passwordInput.required = false;
@@ -171,7 +176,8 @@
       } else {
         form.action = '/access/new';
         modalTitle.textContent = i18n.titleNew || 'New access';
-        modalIcon.className = 'bi bi-plus-circle';
+        if (modalIconNew) modalIconNew.classList.remove('hidden');
+        if (modalIconEdit) modalIconEdit.classList.add('hidden');
         usernameInput.value = '';
         passwordInput.value = '';
         passwordInput.required = true;

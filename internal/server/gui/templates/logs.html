@@ -1,6 +1,6 @@
-{{define "content"}}
+﻿{{define "content"}}
 <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-  <h3 class="text-xl font-semibold">{{t "logs.title"}}</h3>
+  <h3 class="text-xl font-semibold flex items-center gap-2"><span id="live-dot" class="rounded-full bg-accent live-dot inline-block w-2 h-2 shrink-0"></span>{{t "logs.title"}}</h3>
 </div>
 
 <div class="bg-panel border border-border">
@@ -21,8 +21,8 @@
         {{end}}
       </select>
       <input type="search" name="q" class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-auto" value="{{.FilterSearch}}" placeholder="{{t "logs.filter_search"}}">
-      <button class="inline-flex items-center gap-1 bg-accent text-bg px-2.5 py-2 text-sm font-medium hover:bg-accent-hi" type="submit"><i class="bi bi-funnel"></i></button>
-      {{if .HasFilter}}<a class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" href="/logs"><i class="bi bi-x-lg"></i></a>{{end}}
+      <button class="inline-flex items-center gap-1 bg-accent text-bg px-2.5 py-2 text-sm font-medium hover:bg-accent-hi" type="submit"><svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#funnel"></use></svg></button>
+      {{if .HasFilter}}<a class="inline-flex items-center gap-1 border border-border-hi text-dim px-2 py-1 text-sm hover:text-fg hover:bg-white/5" href="/logs"><svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#x-mark"></use></svg></a>{{end}}
     </form>
   </div>
   <div class="overflow-x-auto">
@@ -37,6 +37,7 @@
           <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_target"}}</th>
           <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_in"}}</th>
           <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_out"}}</th>
+          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_connect"}}</th>
           <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_duration"}}</th>
         </tr>
       </thead>
@@ -44,10 +45,10 @@
       {{range .Events}}
         <tr data-id="{{.ID}}" class="border-b border-border hover:bg-accent/5">
           <td class="px-3 py-2 text-dim text-xs font-mono">{{.TSHuman}}</td>
-          <td class="px-3 py-2">
-            {{if eq .Outcome "ok"}}<span class="inline-flex items-center gap-1 text-accent"><i class="bi bi-check-circle mr-1"></i></span>
-            {{else if eq .Outcome "denied"}}<span title="{{t .OutcomeTitle}}" class="inline-flex items-center gap-1 text-amber"><i class="bi bi-slash-circle mr-1"></i></span>
-            {{else}}<span title="{{t .OutcomeTitle}}" class="inline-flex items-center gap-1 text-danger"><i class="bi bi-x-circle mr-1"></i></span>{{end}}
+          <td class="px-3 py-2  text-center">
+            {{if eq .Outcome "ok"}}<span class="inline-flex items-center gap-1 text-accent"><svg class="w-4 h-4 mr-1" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#check-circle"></use></svg></span>
+            {{else if eq .Outcome "denied"}}<span title="{{t .OutcomeTitle}}" class="inline-flex items-center gap-1 text-amber"><svg class="w-4 h-4 mr-1" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#no-symbol"></use></svg></span>
+            {{else}}<span title="{{t .OutcomeTitle}}" class="inline-flex items-center gap-1 text-danger"><svg class="w-4 h-4 mr-1" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#x-circle"></use></svg></span>{{end}}
           </td>
           <td class="px-3 py-2"><span class="inline-flex items-center gap-1 text-dim">{{.Protocol}}</span></td>
           <td class="px-3 py-2">{{.User}}</td>
@@ -55,10 +56,11 @@
           <td class="px-3 py-2 truncate max-w-[320px]">{{if .Target}}<code class="font-mono text-accent-hi">{{.Target}}</code>{{end}}</td>
           <td class="px-3 py-2 text-right font-mono">{{.BytesInH}}</td>
           <td class="px-3 py-2 text-right font-mono">{{.BytesOutH}}</td>
+          <td class="px-3 py-2 text-right font-mono text-dim">{{if .ConnectMS}}{{.ConnectMS}} ms{{else}}&mdash;{{end}}</td>
           <td class="px-3 py-2 text-right font-mono text-dim">{{.DurationMS}} ms</td>
         </tr>
       {{else}}
-        <tr id="logs-empty"><td colspan="9" class="text-center text-dim p-4"><i class="bi bi-inbox text-3xl block mb-2 opacity-50"></i>{{t "logs.empty"}}</td></tr>
+        <tr id="logs-empty"><td colspan="10" class="text-center text-dim p-4"><svg class="w-8 h-8 block mb-2 opacity-50 mx-auto" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#inbox"></use></svg>{{t "logs.empty"}}</td></tr>
       {{end}}
       </tbody>
     </table>
@@ -70,12 +72,12 @@
       <ul class="flex gap-1">
         <li class="{{if not .HasPrev}}opacity-40 pointer-events-none{{end}}">
           <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasPrev}}href="?page={{.PrevPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
-            <i class="bi bi-chevron-left"></i> {{t "logs.page_prev"}}
+            <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#chevron-left"></use></svg> {{t "logs.page_prev"}}
           </a>
         </li>
         <li class="{{if not .HasNext}}opacity-40 pointer-events-none{{end}}">
           <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasNext}}href="?page={{.NextPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
-            {{t "logs.page_next"}} <i class="bi bi-chevron-right"></i>
+            {{t "logs.page_next"}} <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#chevron-right"></use></svg>
           </a>
         </li>
       </ul>
