@@ -24,7 +24,7 @@
       : (d.outcome === 'denied'
         ? '<span class="inline-flex items-center gap-1 text-amber">' + iconDenied + '</span>'
         : '<span class="inline-flex items-center gap-1 text-danger">' + iconErr + '</span>');
-    var ts = new Date(d.ts * 1000).toISOString().replace('T', ' ').slice(0, 19);
+    var ts = new Date(d.ts * 1000).toLocaleTimeString('en-GB', { timeZone: window.PROXYWI_TZ || 'UTC', hour12: false });
     var connectCell = d.connect_ms ? d.connect_ms + ' ms' : '&mdash;';
     tr.innerHTML =
       '<td class="px-3 py-2 text-dim text-xs font-mono">' + ts + '</td>' +

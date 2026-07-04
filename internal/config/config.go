@@ -21,6 +21,7 @@ type Server struct {
 	RateLimitWindow time.Duration
 	BlockCategories []string
 	DoHProviders    []string
+	Timezone        string
 }
 
 type Client struct {
@@ -46,6 +47,7 @@ func LoadServer() (Server, error) {
 		RateLimitWindow: durationEnv("PROXYWI_RATE_LIMIT_WINDOW", time.Second),
 		BlockCategories: splitEnv(os.Getenv("PROXYWI_BLOCK_CATEGORIES")),
 		DoHProviders:    splitEnv(env("PROXYWI_DOH_PROVIDERS", "https://dns.nextdns.io,https://freedns.controld.com/p0")),
+		Timezone:        env("TZ", "UTC"),
 	}
 	return s, nil
 }

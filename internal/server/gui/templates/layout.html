@@ -123,6 +123,7 @@
   {{template "content" .}}
 </main>
 {{block "modals" .}}{{end}}
+<script>window.PROXYWI_TZ="{{.Timezone}}"</script>
 <script src="/dist/js/app.min.js?v={{ver}}"></script>
 </body>
 </html>{{end}}

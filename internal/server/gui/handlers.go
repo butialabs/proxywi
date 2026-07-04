@@ -625,6 +625,7 @@ func (g *GUI) render(w http.ResponseWriter, r *http.Request, name string, data m
 		data = map[string]any{}
 	}
 	data["CSRFToken"] = g.ensureCSRF(w, r)
+	data["Timezone"] = g.Cfg.Timezone
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := g.tpl.render(w, name, v.tr, v.common(data)); err != nil {
 		g.Log.Error("render", "name", name, "err", err)
