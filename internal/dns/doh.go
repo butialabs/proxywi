@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"time"
@@ -46,9 +48,12 @@ func (c *dohConn) Write(b []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	hdr := make([]byte, 2)
-	binary.BigEndian.PutUint16(hdr, uint16(len(resp)))
-	c.rbuf = append(hdr, resp...)
+	if len(resp) > math.MaxUint16 {
+		return 0, fmt.Errorf("DoH response too large: %d bytes", len(resp))
+	}
+	c.rbuf = make([]byte, 2, 2+len(resp))
+	binary.BigEndian.PutUint16(c.rbuf, uint16(len(resp)))
+	c.rbuf = append(c.rbuf, resp...)
 	c.roff = 0
 	return len(b), nil
 }
@@ -84,7 +89,7 @@ func (c *dohConn) post(query []byte) ([]byte, error) {
 	if lastErr != nil {
 		return nil, fmt.Errorf("all DoH endpoints failed: %w", lastErr)
 	}
-	return nil, fmt.Errorf("no DoH endpoints configured")
+	return nil, errors.New("no DoH endpoints configured")
 }
 
 func (c *dohConn) Read(b []byte) (int, error) {

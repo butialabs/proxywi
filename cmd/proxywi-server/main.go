@@ -25,26 +25,29 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// runRetentionSweep trims aggregates (30 days, every 6h) and the request log (24h, every 15m)
 const (
 	retentionWindow    = 30 * 24 * time.Hour
 	logRetentionWindow = 24 * time.Hour
 )
 
 func main() {
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(log)
+	os.Exit(realMain())
+}
+
+func realMain() int {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	if err := run(ctx, log); err != nil {
-		log.Error("server exited", "err", err)
-		os.Exit(1)
+	if err := run(ctx); err != nil {
+		slog.Error("server exited", "err", err)
+		return 1
 	}
+	return 0
 }
 
-func run(ctx context.Context, log *slog.Logger) error {
+func run(ctx context.Context) error {
 	ctx, stopWorkers := context.WithCancel(ctx)
 	defer stopWorkers()
 
@@ -52,11 +55,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	slog.SetDefault(log)
+
 	if len(cfg.DoHProviders) > 0 {
 		net.DefaultResolver = internaldns.NewDoHResolver(cfg.DoHProviders)
 		log.Info("DoH resolver active", "providers", cfg.DoHProviders)
 	}
-	store, err := storage.Open(cfg.DataDir)
+	store, err := storage.Open(ctx, cfg.DataDir)
 	if err != nil {
 		return err
 	}
@@ -68,7 +74,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	if n, err := store.CountAdmins(ctx); err == nil && n == 0 {
 		if cfg.AdminUsername == "" || cfg.AdminPassword == "" {
-			return fmt.Errorf("no admin exists and ADMIN_USERNAME/ADMIN_PASSWORD are not set")
+			return errors.New("no admin exists and ADMIN_USERNAME/ADMIN_PASSWORD are not set")
 		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
 		if err != nil {
@@ -109,6 +115,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	socksProxy := &server.SOCKSProxy{
 		Registry: reg, Gate: gate, Store: store, Log: log, Hub: hub, Blocklist: bl,
+		MaxConns: cfg.SOCKSMaxConns,
 	}
 
 	guiApp, err := gui.New(ctx, store, reg, hub, cfg, log)
@@ -158,11 +165,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		MaxHeaderBytes:    1 << 20,
 	}
 
-	httpLn, err := net.Listen("tcp", cfg.HTTPAddr)
+	var lc net.ListenConfig
+	httpLn, err := lc.Listen(ctx, "tcp", cfg.HTTPAddr)
 	if err != nil {
 		return fmt.Errorf("listen http %s: %w", cfg.HTTPAddr, err)
 	}
-	socksLn, err := net.Listen("tcp", cfg.SOCKSAddr)
+	socksLn, err := lc.Listen(ctx, "tcp", cfg.SOCKSAddr)
 	if err != nil {
 		return fmt.Errorf("listen socks %s: %w", cfg.SOCKSAddr, err)
 	}
@@ -175,35 +183,28 @@ func run(ctx context.Context, log *slog.Logger) error {
 	var wg sync.WaitGroup
 	errCh := make(chan error, 3)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		errCh <- serveListener(srv, httpLn, log, "http-proxy")
-	}()
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		errCh <- serveHTTP(guiSrv, cfg.MainAddr, log, "gui+control")
-	}()
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		log.Info("listening", "addr", cfg.SOCKSAddr, "role", "socks-proxy")
-		if err := socksProxy.Serve(socksLn); err != nil && !errors.Is(err, net.ErrClosed) {
+		if err := socksProxy.Serve(ctx, socksLn); err != nil && !errors.Is(err, net.ErrClosed) {
 			errCh <- err
 		}
-	}()
+	})
 
-	wg.Add(1)
-	go func() { defer wg.Done(); runRetentionSweep(ctx, store, log) }()
-
-	wg.Add(1)
-	go func() { defer wg.Done(); runBlocklistRefresh(ctx, cfg, store, bl, log) }()
+	wg.Go(func() { runRetentionSweep(ctx, store, log) })
+	wg.Go(func() { runBlocklistRefresh(ctx, cfg, store, bl, log) })
 
 	log.Info("proxywi server up",
 		"version", version.Version,
+		"log_level", cfg.LogLevel,
+		"socks_max_conns", cfg.SOCKSMaxConns,
 		"http", cfg.HTTPAddr, "socks", cfg.SOCKSAddr, "main", cfg.MainAddr,
 		"main_domain", cfg.MainDomain,
 		"retention_days", int(retentionWindow/(24*time.Hour)))

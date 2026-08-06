@@ -19,8 +19,6 @@ var templatesFS embed.FS
 //go:embed dist
 var staticFS embed.FS
 
-// assetVer is a short content hash used as a cache-busting query param for the
-// CSS/JS/SVG assets. It changes whenever any of those files is rebuilt.
 var assetVer = sync.OnceValue(func() string {
 	h := fnv.New64a()
 	for _, path := range []string{
@@ -36,8 +34,23 @@ var assetVer = sync.OnceValue(func() string {
 })
 
 type templates struct {
-	layout []byte
-	bodies map[string][]byte
+	// byLang[lang][page]
+	byLang map[string]map[string]*template.Template
+}
+
+func templateFuncs(tr i18n.Translator) template.FuncMap {
+	return template.FuncMap{
+		"t":   func(key string) string { return tr(key) },
+		"tp":  func(key string, params any) string { return expandParams(tr(key), params) },
+		"ver": assetVer,
+		"json": func(v any) (template.JS, error) {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return "", err
+			}
+			return template.JS(b), nil
+		},
+	}
 }
 
 func loadTemplates() (*templates, error) {
@@ -49,7 +62,7 @@ func loadTemplates() (*templates, error) {
 	if err != nil {
 		return nil, err
 	}
-	bodies := map[string][]byte{}
+	bodies := map[string]string{}
 	for _, e := range entries {
 		if e.IsDir() || e.Name() == "layout.html" {
 			continue
@@ -58,44 +71,66 @@ func loadTemplates() (*templates, error) {
 		if err != nil {
 			return nil, err
 		}
-		bodies[e.Name()] = body
+		bodies[e.Name()] = string(body)
 	}
-	return &templates{layout: layout, bodies: bodies}, nil
+
+	langs := []string{i18n.DefaultLang}
+	for _, l := range i18n.Available() {
+		if l.Tag != i18n.DefaultLang {
+			langs = append(langs, l.Tag)
+		}
+	}
+
+	t := &templates{byLang: make(map[string]map[string]*template.Template, len(langs))}
+	layoutText := string(layout)
+	for _, lang := range langs {
+		funcs := templateFuncs(i18n.For(lang, ""))
+		pages := make(map[string]*template.Template, len(bodies))
+		for name, body := range bodies {
+			tpl, err := template.New(name).Funcs(funcs).Parse(layoutText)
+			if err != nil {
+				return nil, fmt.Errorf("parse layout for %s: %w", lang, err)
+			}
+			if _, err := tpl.Parse(body); err != nil {
+				return nil, fmt.Errorf("parse %s for %s: %w", name, lang, err)
+			}
+			pages[name] = tpl
+		}
+		t.byLang[lang] = pages
+	}
+	return t, nil
 }
 
-func (t *templates) render(w io.Writer, name string, tr i18n.Translator, data any) error {
-	body, ok := t.bodies[name]
+func (t *templates) render(w io.Writer, name, lang string, data any) error {
+	pages, ok := t.byLang[lang]
+	if !ok {
+		pages = t.byLang[i18n.DefaultLang]
+	}
+	tpl, ok := pages[name]
 	if !ok {
 		return fmt.Errorf("unknown template %q", name)
 	}
-	funcs := template.FuncMap{
-		"t":   func(key string) string { return tr(key) },
-		"tp":  func(key string, params any) string { return expandParams(tr(key), params) },
-		"ver": func() string { return assetVer() },
-		"json": func(v any) (template.JS, error) {
-			b, err := json.Marshal(v)
-			if err != nil {
-				return "", err
-			}
-			return template.JS(b), nil
-		},
-	}
-	tpl, err := template.New(name).Funcs(funcs).Parse(string(t.layout))
-	if err != nil {
-		return err
-	}
-	if _, err := tpl.Parse(string(body)); err != nil {
-		return fmt.Errorf("parse %s: %w", name, err)
-	}
 	return tpl.Execute(w, data)
 }
+
+var paramTemplates sync.Map
 
 func expandParams(s string, params any) string {
 	if params == nil {
 		return s
 	}
-	tpl, err := template.New("inline").Parse(s)
-	if err != nil {
+	var tpl *template.Template
+	if cached, ok := paramTemplates.Load(s); ok {
+		tpl, _ = cached.(*template.Template)
+	} else {
+		parsed, err := template.New("inline").Parse(s)
+		if err != nil {
+			return s
+		}
+		paramTemplates.Store(s, parsed)
+		tpl = parsed
+	}
+	if tpl == nil {
 		return s
 	}
 	var buf bytes.Buffer

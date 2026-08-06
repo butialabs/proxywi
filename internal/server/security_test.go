@@ -13,7 +13,7 @@ import (
 
 func newTestGate(t *testing.T) *AuthGate {
 	t.Helper()
-	store, err := storage.Open(t.TempDir())
+	store, err := storage.Open(t.Context(), t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestVerifyCredentials_SharedPasswordDoesNotCrossUsers(t *testing.T) {
 }
 
 func BenchmarkVerifyCredentials_Cached(b *testing.B) {
-	store, err := storage.Open(b.TempDir())
+	store, err := storage.Open(b.Context(), b.TempDir())
 	if err != nil {
 		b.Fatalf("open store: %v", err)
 	}

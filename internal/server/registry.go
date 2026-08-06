@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -102,7 +102,7 @@ func (r *Registry) PickNext() (*Agent, error) {
 	for id := range r.agents {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 
 	next := ids[0]
 	for _, id := range ids {

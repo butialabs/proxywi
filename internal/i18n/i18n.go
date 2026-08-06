@@ -1,5 +1,7 @@
-// To add a language, drop a locales/<tag>.json file, locales are embedded at build time.
-// Missing keys and unknown locales fall back to English.
+// Package i18n resolves user-facing strings for a request's language.
+//
+// To add a language, drop a locales/<tag>.json file; locales are embedded at
+// build time. Missing keys and unknown locales fall back to English.
 package i18n
 
 import (
@@ -119,7 +121,7 @@ func parseAcceptLang(h string) []string {
 		return nil
 	}
 	var out []string
-	for _, part := range strings.Split(h, ",") {
+	for part := range strings.SplitSeq(h, ",") {
 		tag := strings.TrimSpace(part)
 		if i := strings.IndexByte(tag, ';'); i >= 0 {
 			tag = tag[:i]

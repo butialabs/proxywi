@@ -12,7 +12,7 @@ import (
 
 func newAuthTestControl(t *testing.T) *Control {
 	t.Helper()
-	store, err := storage.Open(t.TempDir())
+	store, err := storage.Open(t.Context(), t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

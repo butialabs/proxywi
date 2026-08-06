@@ -158,9 +158,13 @@ Run it 10 times in a loop, each call exits through a different agent, different 
 | `ADMIN_USERNAME`            | *required*                                    | Initial admin username |
 | `ADMIN_PASSWORD`            | *required*                                    | Initial admin password (min 8 chars) |
 | `PROXYWI_DOMAIN`            | *(unset)*                                     | Public hostname, used for PROXY protocol IP resolution. |
-| `PROXYWI_RATE_LIMIT_MAX`    | `5`                                           | Max proxy requests per user per window |
+| `PROXYWI_RATE_LIMIT_MAX`    | `5`                                           | Proxy requests allowed per user per window (token bucket: this is also the burst) |
 | `PROXYWI_RATE_LIMIT_WINDOW` | `1s`                                          | Rate-limit window (`500ms`, `2s`, `1m`, etc.) |
+| `PROXYWI_SOCKS_MAX_CONNS`   | `1000`                                        | Concurrent SOCKS5 connections; further accepts wait rather than being dropped |
 | `PROXYWI_BLOCK_CATEGORIES`  | *(unset)*                                     | Comma-separated domain categories to block: `adult`, `gambling`, `crypto`. Lists fetched on startup and refreshed weekly |
+| `PROXYWI_DOH_PROVIDERS`     | `https://dns.nextdns.io,https://freedns.controld.com/p0` | Comma-separated DNS-over-HTTPS endpoints used to resolve targets |
+| `PROXYWI_LOG_LEVEL`         | `info`                                        | `debug`, `info`, `warn` or `error` |
+| `TZ`                        | `UTC`                                         | Timezone used to render timestamps in the GUI |
 
 ### proxywi-client (agent)
 
@@ -168,6 +172,11 @@ Run it 10 times in a loop, each call exits through a different agent, different 
 |---------------------------|-----------------------------------------------|---------|
 | `PROXYWI_SERVER`          | *required*                                    | Control plane URL, e.g. `wss://proxywi.example.com`. |
 | `PROXYWI_TOKEN`           | *required*                                    | Agent token from the GUI. Shown once at enrollment. |
+| `PROXYWI_ALLOWED_TARGETS` | *(unset)*                                     | Comma-separated hosts, addresses or CIDRs the agent may reach. A match here overrides the denied list |
+| `PROXYWI_DENIED_TARGETS`  | *(private ranges)*                            | Comma-separated addresses or CIDRs the agent must not reach. Setting this **replaces** the built-in list (loopback, RFC1918, link-local, multicast) rather than extending it |
+| `PROXYWI_DOH_PROVIDERS`   | `https://dns.nextdns.io,https://freedns.controld.com/p0` | Comma-separated DNS-over-HTTPS endpoints. The resolved address is the one dialled, so the target cannot change between the ACL check and the connection |
+| `PROXYWI_TLS_INSECURE`    | `false`                                       | Skip TLS verification when dialling the control plane. For testing against self-signed certificates only |
+| `PROXYWI_LOG_LEVEL`       | `info`                                        | `debug`, `info`, `warn` or `error` |
 
 ---
 

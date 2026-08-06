@@ -7,12 +7,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func openTestStore(t *testing.T) (*Store, func()) {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := Open(dir)
+	s, err := Open(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -177,7 +179,7 @@ func TestAllClientTokenHashes_RevocationRacingRefillIsNotCached(t *testing.T) {
 	ctx := context.Background()
 
 	const rounds = 60
-	for i := 0; i < rounds; i++ {
+	for i := range rounds {
 		id, err := s.CreateClient(ctx, fmt.Sprintf("victim-%d", i), "bcrypt-hash", fmt.Sprintf("sha-%d", i), fmt.Sprintf("tokenid-%d", i))
 		if err != nil {
 			t.Fatalf("create client: %v", err)
@@ -220,5 +222,119 @@ func TestAllClientTokenHashes_ExposesTokenID(t *testing.T) {
 	}
 	if got := hashes[id].TokenID; got != "abcdef0123456789" {
 		t.Fatalf("TokenID = %q, want %q", got, "abcdef0123456789")
+	}
+}
+
+func TestClientByToken_ResolvesEveryHashShape(t *testing.T) {
+	s, cleanup := openTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	modern := "aaaabbbbccccddddaaaabbbbccccdddd"
+	modernID, err := s.CreateClient(ctx, "modern", "", SHA256Token(modern), TokenIDFromToken(modern))
+	if err != nil {
+		t.Fatalf("create modern: %v", err)
+	}
+
+	legacy := "11112222333344441111222233334444"
+	legacyHash, err := bcrypt.GenerateFromPassword([]byte(legacy), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	legacyID, err := s.CreateClient(ctx, "legacy", string(legacyHash), "", "")
+	if err != nil {
+		t.Fatalf("create legacy: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		token string
+		want  int64
+	}{
+		{"sha256 fast path", modern, modernID},
+		{"legacy bcrypt fallback", legacy, legacyID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cl, err := s.ClientByToken(ctx, tc.token)
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if cl == nil || cl.ID != tc.want {
+				t.Fatalf("got %v, want client %d", cl, tc.want)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, token string }{
+		{"empty", ""},
+		{"unknown", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cl, err := s.ClientByToken(ctx, tc.token)
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if cl != nil {
+				t.Fatalf("expected no match, got client %d", cl.ID)
+			}
+		})
+	}
+}
+
+func TestClientByToken_FallsThroughOnTokenIDPrefixCollision(t *testing.T) {
+	s, cleanup := openTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	const prefix = "0123456789abcdef"
+	if _, err := s.CreateClient(ctx, "prefix-squatter", "", SHA256Token(prefix+"AAAAAAAAAAAAAAAA"), prefix); err != nil {
+		t.Fatalf("create squatter: %v", err)
+	}
+
+	wanted := prefix + "BBBBBBBBBBBBBBBB"
+	hash, err := bcrypt.GenerateFromPassword([]byte(wanted), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	// Legacy row: no token_id, so only the fallback scan can find it.
+	legacyID, err := s.CreateClient(ctx, "legacy-same-prefix", string(hash), "", "")
+	if err != nil {
+		t.Fatalf("create legacy: %v", err)
+	}
+
+	cl, err := s.ClientByToken(ctx, wanted)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if cl == nil || cl.ID != legacyID {
+		t.Fatalf("got %v, want client %d; the prefix collision swallowed the match", cl, legacyID)
+	}
+}
+
+func TestClientByToken_BackfillsSHA256AfterBcryptMatch(t *testing.T) {
+	s, cleanup := openTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	token := "cccc4444dddd5555cccc4444dddd5555"
+	hash, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	id, err := s.CreateClient(ctx, "to-migrate", string(hash), "", "")
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	if _, err := s.ClientByToken(ctx, token); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	cl, err := s.ClientByID(ctx, id)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if cl.TokenHashSHA256 != SHA256Token(token) {
+		t.Fatalf("sha256 not backfilled: got %q", cl.TokenHashSHA256)
 	}
 }

@@ -580,10 +580,7 @@ func (g *GUI) getGlobalStats(w http.ResponseWriter, r *http.Request) {
 		page = totalPages
 	}
 	start := (page - 1) * statsPageSize
-	end := start + statsPageSize
-	if end > total {
-		end = total
-	}
+	end := min(start+statsPageSize, total)
 
 	g.render(w, r, "stats.html", map[string]any{
 		"Title":      "Stats",
@@ -634,10 +631,7 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 	if g.dbError(w, "count proxy events", err) {
 		return
 	}
-	totalPages := (total + logsPageSize - 1) / logsPageSize
-	if totalPages < 1 {
-		totalPages = 1
-	}
+	totalPages := max((total+logsPageSize-1)/logsPageSize, 1)
 	if page > totalPages {
 		page = totalPages
 		offset = (page - 1) * logsPageSize
@@ -727,11 +721,15 @@ func (g *GUI) render(w http.ResponseWriter, r *http.Request, name string, data m
 	}
 	data["CSRFToken"] = g.ensureCSRF(w, r)
 	data["Timezone"] = g.Cfg.Timezone
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := g.tpl.render(w, name, v.tr, v.common(data)); err != nil {
+
+	var buf bytes.Buffer
+	if err := g.tpl.render(&buf, name, v.lang, v.common(data)); err != nil {
 		g.Log.Error("render", "name", name, "err", err)
 		http.Error(w, "render error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(buf.Bytes())
 }
 
 func (g *GUI) renderFlash(w http.ResponseWriter, r *http.Request, name, flash, kind, title string) {

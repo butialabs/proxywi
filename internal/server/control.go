@@ -16,9 +16,11 @@ import (
 	"github.com/butialabs/proxywi/internal/tunnel"
 	"github.com/coder/websocket"
 	"github.com/hashicorp/yamux"
-	"golang.org/x/crypto/bcrypt"
 )
 
+// Control serves the agent control plane at /ws/control: it authenticates the
+// handshake, registers the agent, and keeps the meta stream flowing for the life
+// of the tunnel.
 type Control struct {
 	Store    *storage.Store
 	Registry *Registry
@@ -27,6 +29,7 @@ type Control struct {
 	OnEvent  func(clientID int64, msg tunnel.MetaMessage)
 }
 
+// Handler returns the HTTP handler for the control endpoint.
 func (c *Control) Handler() http.Handler {
 	return http.HandlerFunc(c.serve)
 }
@@ -86,6 +89,10 @@ func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Background, not r.Context(): this conn backs the yamux session for the whole
+	// life of the tunnel, and tying it to the request would tear it down as soon
+	// as the handler returned.
+	//nolint:contextcheck // deliberate, see above
 	netConn := websocket.NetConn(context.Background(), ws, websocket.MessageBinary)
 	defer func() { _ = netConn.Close() }()
 
@@ -198,60 +205,14 @@ func (c *Control) readMetaStream(ctx context.Context, agent *Agent) {
 }
 
 func (c *Control) authenticateToken(ctx context.Context, token string) (int64, *storage.Client, error) {
-	sha256h := storage.SHA256Token(token)
-
-	tokenID := storage.TokenIDFromToken(token)
-	if tokenID != "" {
-		cl, err := c.Store.ClientByTokenID(ctx, tokenID)
-		if err != nil {
-			return 0, nil, err
-		}
-		if cl != nil {
-			if cl.TokenHashSHA256 != "" {
-				if cl.TokenHashSHA256 == sha256h {
-					return cl.ID, cl, nil
-				}
-			} else if bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
-				go c.migrateTokenHash(cl.ID, sha256h)
-				return cl.ID, cl, nil
-			}
-		}
-	}
-
-	// Fallback for legacy tokens without token_id.
-	hashes, err := c.Store.AllClientTokenHashes(ctx)
+	cl, err := c.Store.ClientByToken(ctx, token)
 	if err != nil {
 		return 0, nil, err
 	}
-	for id, h := range hashes {
-		if h.SHA256 != "" && h.SHA256 == sha256h {
-			cl, err := c.Store.ClientByID(ctx, id)
-			if err != nil || cl == nil {
-				return 0, nil, errors.New("client vanished")
-			}
-			return id, cl, nil
-		}
+	if cl == nil {
+		return 0, nil, errors.New("no matching token")
 	}
-	for id, h := range hashes {
-		if h.SHA256 != "" || h.TokenID != "" {
-			continue
-		}
-		if bcrypt.CompareHashAndPassword([]byte(h.Bcrypt), []byte(token)) == nil {
-			cl, err := c.Store.ClientByID(ctx, id)
-			if err != nil || cl == nil {
-				return 0, nil, errors.New("client vanished")
-			}
-			go c.migrateTokenHash(id, sha256h)
-			return id, cl, nil
-		}
-	}
-	return 0, nil, errors.New("no matching token")
-}
-
-func (c *Control) migrateTokenHash(clientID int64, sha256h string) {
-	if err := c.Store.SetClientTokenSHA256(context.Background(), clientID, sha256h); err != nil {
-		c.Log.Warn("backfill client token sha256", "client_id", clientID, "err", err)
-	}
+	return cl.ID, cl, nil
 }
 
 func writeAck(ctx context.Context, ws *websocket.Conn, ack tunnel.HandshakeAck) error {

@@ -50,19 +50,19 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !authed {
 		w.Header().Set("Proxy-Authenticate", `Basic realm="proxywi"`)
 		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
-		p.logEvent(ctx, 0, user, 0, "", "", "http", "denied", "auth", 0, 0, 0, 0)
+		p.logEvent(ctx, storage.ProxyEvent{Username: user, Outcome: "denied", OutcomeReason: "auth"})
 		return
 	}
 	if !p.Gate.AllowProxyRequest(u.Username) {
 		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
-		p.logEvent(ctx, u.ID, u.Username, 0, "", "", "http", "denied", "ratelimit", 0, 0, 0, 0)
+		p.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, Outcome: "denied", OutcomeReason: "ratelimit"})
 		return
 	}
 
 	agent, err := p.Registry.PickNext()
 	if err != nil {
 		http.Error(w, "No upstream agent available", http.StatusBadGateway)
-		p.logEvent(ctx, u.ID, u.Username, 0, "", "", "http", "failed", "no_agent", 0, 0, 0, 0)
+		p.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, Outcome: "failed", OutcomeReason: "no_agent"})
 		return
 	}
 
@@ -85,7 +85,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if p.Blocklist.IsBlocked(host) {
 			http.Error(w, "Blocked by content policy", http.StatusForbidden)
-			p.logEvent(ctx, u.ID, u.Username, 0, "", target, "http", "denied", "blocklist", 0, 0, 0, 0)
+			p.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, TargetHost: target, Outcome: "denied", OutcomeReason: "blocklist"})
 			return
 		}
 	}
@@ -96,7 +96,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cancel()
 	if err != nil {
 		http.Error(w, "Upstream dial failed", http.StatusBadGateway)
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "dial", 0, 0, 0, 0)
+		p.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, ClientID: agent.ID, ClientName: agent.Name, TargetHost: target, Outcome: "failed", OutcomeReason: "dial"})
 		return
 	}
 	defer func() { _ = upstream.Close() }()
@@ -105,12 +105,12 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var reply tunnel.ProxyReply
 	if err := tunnel.ReadJSONLine(upReader, &reply); err != nil {
 		http.Error(w, "Upstream reply error", http.StatusBadGateway)
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "reply", 0, 0, 0, 0)
+		p.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, ClientID: agent.ID, ClientName: agent.Name, TargetHost: target, Outcome: "failed", OutcomeReason: "reply"})
 		return
 	}
 	if !reply.OK {
 		http.Error(w, "Upstream: "+reply.Error, http.StatusBadGateway)
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "upstream", 0, 0, 0, 0)
+		p.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, ClientID: agent.ID, ClientName: agent.Name, TargetHost: target, Outcome: "failed", OutcomeReason: "upstream"})
 		return
 	}
 	_ = upstream.SetDeadline(time.Time{})
@@ -119,12 +119,12 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "hijack not supported", http.StatusInternalServerError)
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "hijack", 0, 0, 0, 0)
+		p.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, ClientID: agent.ID, ClientName: agent.Name, TargetHost: target, Outcome: "failed", OutcomeReason: "hijack"})
 		return
 	}
 	clientConn, bufrw, err := hj.Hijack()
 	if err != nil {
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "hijack", 0, 0, 0, 0)
+		p.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, ClientID: agent.ID, ClientName: agent.Name, TargetHost: target, Outcome: "failed", OutcomeReason: "hijack"})
 		return
 	}
 	defer func() { _ = clientConn.Close() }()
@@ -149,9 +149,14 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		bytesIn += drainBuffered(clientConn, upReader)
 
-		bytesIn, bytesOut = pipe(clientConn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "ok", "",
-			bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
+		bytesIn, bytesOut = pipe(ctx, clientConn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
+		p.logEvent(ctx, storage.ProxyEvent{
+			UserID: u.ID, Username: u.Username,
+			ClientID: agent.ID, ClientName: agent.Name,
+			TargetHost: target, Outcome: "ok",
+			BytesIn: bytesIn, BytesOut: bytesOut,
+			DurationMS: time.Since(start).Milliseconds(), ConnectMS: connectMS,
+		})
 		return
 	}
 
@@ -161,15 +166,20 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	reqBytes := &countingWriter{w: upstream}
 	if err := r.Write(reqBytes); err != nil {
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "write", 0, 0, 0, 0)
+		p.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, ClientID: agent.ID, ClientName: agent.Name, TargetHost: target, Outcome: "failed", OutcomeReason: "write"})
 		return
 	}
 	bytesOut += reqBytes.n
 
 	resp, err := http.ReadResponse(upReader, r)
 	if err != nil {
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "reply",
-			bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
+		p.logEvent(ctx, storage.ProxyEvent{
+			UserID: u.ID, Username: u.Username,
+			ClientID: agent.ID, ClientName: agent.Name,
+			TargetHost: target, Outcome: "failed", OutcomeReason: "reply",
+			BytesIn: bytesIn, BytesOut: bytesOut,
+			DurationMS: time.Since(start).Milliseconds(), ConnectMS: connectMS,
+		})
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -178,14 +188,24 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	respBytes := &countingWriter{w: clientConn}
 	if err := resp.Write(respBytes); err != nil {
-		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "write",
-			bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
+		p.logEvent(ctx, storage.ProxyEvent{
+			UserID: u.ID, Username: u.Username,
+			ClientID: agent.ID, ClientName: agent.Name,
+			TargetHost: target, Outcome: "failed", OutcomeReason: "write",
+			BytesIn: bytesIn, BytesOut: bytesOut,
+			DurationMS: time.Since(start).Milliseconds(), ConnectMS: connectMS,
+		})
 		return
 	}
 	bytesIn += respBytes.n
 
-	p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "ok", "",
-		bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
+	p.logEvent(ctx, storage.ProxyEvent{
+		UserID: u.ID, Username: u.Username,
+		ClientID: agent.ID, ClientName: agent.Name,
+		TargetHost: target, Outcome: "ok",
+		BytesIn: bytesIn, BytesOut: bytesOut,
+		DurationMS: time.Since(start).Milliseconds(), ConnectMS: connectMS,
+	})
 }
 
 func drainBuffered(dst io.Writer, br *bufio.Reader) int64 {
@@ -229,7 +249,7 @@ var hopByHopHeaders = []string{
 
 func stripHopByHopHeaders(h http.Header) {
 	if c := h.Get("Connection"); c != "" {
-		for _, token := range strings.Split(c, ",") {
+		for token := range strings.SplitSeq(c, ",") {
 			if name := strings.TrimSpace(token); name != "" {
 				h.Del(name)
 			}
@@ -240,50 +260,15 @@ func stripHopByHopHeaders(h http.Header) {
 	}
 }
 
-func (p *HTTPProxy) logEvent(ctx context.Context,
-	userID int64, user string,
-	clientID int64, clientName string,
-	target, proto, outcome, reason string,
-	bIn, bOut, durMS, connectMS int64) {
-	ev := storage.ProxyEvent{
-		TS:            time.Now(),
-		UserID:        userID,
-		Username:      user,
-		ClientID:      clientID,
-		ClientName:    clientName,
-		TargetHost:    target,
-		Protocol:      proto,
-		Outcome:       outcome,
-		OutcomeReason: reason,
-		BytesIn:       bIn,
-		BytesOut:      bOut,
-		DurationMS:    durMS,
-		ConnectMS:     connectMS,
-	}
-	id, err := p.Store.InsertProxyEvent(ctx, ev)
-	if err != nil {
-		p.Log.Warn("proxy event insert", "err", err)
-		return
-	}
-	if p.Hub != nil {
-		p.Hub.Publish(Event{
-			Type: "proxy_event",
-			Data: ProxyLogEvent{
-				ID: id, TS: ev.TS.Unix(),
-				User:     user,
-				ClientID: clientID, ClientName: clientName,
-				Target: target, Protocol: proto,
-				BytesIn: bIn, BytesOut: bOut,
-				DurationMS: durMS, ConnectMS: connectMS, Outcome: outcome,
-			},
-		})
-	}
+func (p *HTTPProxy) logEvent(ctx context.Context, ev storage.ProxyEvent) {
+	ev.Protocol = "http"
+	proxyEventSink{Store: p.Store, Log: p.Log, Hub: p.Hub}.record(ctx, ev)
 }
 
-func pipe(client net.Conn, upstream net.Conn, inSeed, outSeed int64, idleTimeout time.Duration) (int64, int64) {
+func pipe(ctx context.Context, client net.Conn, upstream net.Conn, inSeed, outSeed int64, idleTimeout time.Duration) (int64, int64) {
 	inCh := make(chan int64, 1)
 	outCh := make(chan int64, 1)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	if idleTimeout > 0 {
@@ -314,10 +299,7 @@ func halfClose(c net.Conn) {
 }
 
 func refreshDeadlines(ctx context.Context, a, b net.Conn, idleTimeout time.Duration) {
-	interval := idleTimeout / 2
-	if interval < 5*time.Second {
-		interval = 5 * time.Second
-	}
+	interval := max(idleTimeout/2, 5*time.Second)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -341,10 +323,9 @@ func parseProxyAuth(h string) (user, pass string, ok bool) {
 	if err != nil {
 		return
 	}
-	s := string(raw)
-	i := strings.IndexByte(s, ':')
-	if i < 0 {
-		return
+	user, pass, ok = strings.Cut(string(raw), ":")
+	if !ok {
+		return "", "", false
 	}
-	return s[:i], s[i+1:], true
+	return user, pass, true
 }

@@ -3,66 +3,13 @@ package gui
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/butialabs/proxywi/internal/storage"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func (g *GUI) clientByToken(ctx context.Context, token string) (*storage.Client, error) {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return nil, nil
-	}
-	sha256h := storage.SHA256Token(token)
-	tokenID := storage.TokenIDFromToken(token)
-	if tokenID != "" {
-		cl, err := g.Store.ClientByTokenID(ctx, tokenID)
-		if err != nil {
-			return nil, err
-		}
-		if cl != nil {
-			if cl.TokenHashSHA256 != "" {
-				if cl.TokenHashSHA256 == sha256h {
-					return cl, nil
-				}
-			} else if bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
-				go g.migrateTokenHash(cl.ID, sha256h)
-				return cl, nil
-			}
-		}
-	}
-	// Fallback for legacy tokens without token_id.
-	hashes, err := g.Store.AllClientTokenHashes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for id, h := range hashes {
-		if h.SHA256 != "" && h.SHA256 == sha256h {
-			return g.Store.ClientByID(ctx, id)
-		}
-	}
-	for id, h := range hashes {
-		if h.SHA256 != "" || h.TokenID != "" {
-			continue
-		}
-		if bcrypt.CompareHashAndPassword([]byte(h.Bcrypt), []byte(token)) == nil {
-			cl, err := g.Store.ClientByID(ctx, id)
-			if err != nil {
-				return nil, err
-			}
-			go g.migrateTokenHash(id, sha256h)
-			return cl, nil
-		}
-	}
-	return nil, nil
-}
-
-func (g *GUI) migrateTokenHash(clientID int64, sha256h string) {
-	if err := g.Store.SetClientTokenSHA256(context.Background(), clientID, sha256h); err != nil {
-		g.Log.Warn("backfill client token sha256", "client_id", clientID, "err", err)
-	}
+	return g.Store.ClientByToken(ctx, token)
 }
 
 func (g *GUI) getTokenLogin(w http.ResponseWriter, r *http.Request) {

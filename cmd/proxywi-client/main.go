@@ -1,4 +1,3 @@
-// Command proxywi-client is the agent that connects to a Proxywi server and forwards proxy traffic.
 package main
 
 import (
@@ -16,23 +15,31 @@ import (
 )
 
 func main() {
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(log)
+	os.Exit(realMain())
+}
+
+func realMain() int {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	if err := run(ctx, log); err != nil {
-		log.Error("client exited", "err", err)
-		os.Exit(1)
+	if err := run(ctx); err != nil {
+		slog.Error("client exited", "err", err)
+		return 1
 	}
+	return 0
 }
 
-func run(ctx context.Context, log *slog.Logger) error {
+func run(ctx context.Context) error {
 	cfg, err := config.LoadClient()
 	if err != nil {
 		return err
 	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	slog.SetDefault(log)
+	log.Info("proxywi client starting", "version", version.Version, "log_level", cfg.LogLevel)
+
 	serverURL := strings.TrimRight(cfg.Server, "/")
 	agent := &client.Agent{
 		ServerURL:      serverURL,
@@ -47,8 +54,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	backoff := time.Second
 	for {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
 			return nil
+		default:
 		}
 		start := time.Now()
 		if err := agent.Run(ctx); err != nil {

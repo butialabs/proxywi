@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -18,6 +20,8 @@ import (
 	"time"
 
 	petname "github.com/dustinkirkland/golang-petname"
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/golang-migrate/migrate/v4"
 	migratesqlite "github.com/golang-migrate/migrate/v4/database/sqlite"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
@@ -40,6 +44,7 @@ type tokenCacheEntry struct {
 }
 
 const cacheSessionTTL = 60
+
 type ClientHashes struct {
 	Bcrypt  string
 	SHA256  string
@@ -61,7 +66,7 @@ type Store struct {
 	hashCacheGen uint64
 }
 
-func Open(dataDir string) (*Store, error) {
+func Open(ctx context.Context, dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
@@ -74,7 +79,7 @@ func Open(dataDir string) (*Store, error) {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(0)
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		return nil, err
 	}
 	if err := runMigrations(db); err != nil {
@@ -325,7 +330,7 @@ func (s *Store) clientNameExists(ctx context.Context, name string) (bool, error)
 }
 
 func (s *Store) GenerateUniqueClientName(ctx context.Context) (string, error) {
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		name := petname.Generate(3, "-")
 		exists, err := s.clientNameExists(ctx, name)
 		if err != nil {
@@ -335,7 +340,7 @@ func (s *Store) GenerateUniqueClientName(ctx context.Context) (string, error) {
 			return name, nil
 		}
 	}
-	return "", fmt.Errorf("could not generate a unique client name")
+	return "", errors.New("could not generate a unique client name")
 }
 
 func (s *Store) NormalizeLegacyClientNames(ctx context.Context) error {
@@ -437,6 +442,62 @@ func (s *Store) ClientByTokenID(ctx context.Context, tokenID string) (*Client, e
 	c.LastSeen = time.Unix(last, 0).UTC()
 	c.CreatedAt = time.Unix(created, 0).UTC()
 	return &c, nil
+}
+
+func (s *Store) ClientByToken(ctx context.Context, token string) (*Client, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, nil
+	}
+	sha := SHA256Token(token)
+
+	if tokenID := TokenIDFromToken(token); tokenID != "" {
+		cl, err := s.ClientByTokenID(ctx, tokenID)
+		if err != nil {
+			return nil, err
+		}
+		if cl != nil {
+			if cl.TokenHashSHA256 != "" {
+				if subtle.ConstantTimeCompare([]byte(cl.TokenHashSHA256), []byte(sha)) == 1 {
+					return cl, nil
+				}
+			} else if bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
+				s.backfillTokenSHA256(ctx, cl.ID, sha)
+				return cl, nil
+			}
+			// Fall through: a legacy row without a token_id could still match.
+		}
+	}
+
+	hashes, err := s.AllClientTokenHashes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for id, h := range hashes {
+		if h.SHA256 != "" && subtle.ConstantTimeCompare([]byte(h.SHA256), []byte(sha)) == 1 {
+			return s.ClientByID(ctx, id)
+		}
+	}
+	for id, h := range hashes {
+		if h.SHA256 != "" || h.TokenID != "" {
+			continue
+		}
+		if bcrypt.CompareHashAndPassword([]byte(h.Bcrypt), []byte(token)) == nil {
+			cl, err := s.ClientByID(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			s.backfillTokenSHA256(ctx, id, sha)
+			return cl, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *Store) backfillTokenSHA256(ctx context.Context, clientID int64, sha string) {
+	if err := s.SetClientTokenSHA256(ctx, clientID, sha); err != nil {
+		slog.Warn("backfill client token sha256", "client_id", clientID, "err", err)
+	}
 }
 
 func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]ClientHashes, error) {
@@ -981,10 +1042,7 @@ func (s *Store) DomainStats(ctx context.Context, clientID int64, since time.Time
 func (s *Store) UpsertBlockedDomains(ctx context.Context, domains []string, category string) error {
 	const chunkSize = 1000
 	for i := 0; i < len(domains); i += chunkSize {
-		end := i + chunkSize
-		if end > len(domains) {
-			end = len(domains)
-		}
+		end := min(i+chunkSize, len(domains))
 		chunk := domains[i:end]
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"strconv"
 	"time"
 
@@ -46,7 +47,7 @@ const (
 
 var socksReplyZero = []byte{0, 0, 0, 0, 0, 0}
 
-func (s *SOCKSProxy) Serve(ln net.Listener) error {
+func (s *SOCKSProxy) Serve(ctx context.Context, ln net.Listener) error {
 	maxConns := s.MaxConns
 	if maxConns <= 0 {
 		maxConns = defaultSOCKSMaxConns
@@ -60,15 +61,14 @@ func (s *SOCKSProxy) Serve(ln net.Listener) error {
 		sem <- struct{}{}
 		go func(c net.Conn) {
 			defer func() { <-sem }()
-			s.handle(c)
+			s.handle(ctx, c)
 		}(conn)
 	}
 }
 
-func (s *SOCKSProxy) handle(conn net.Conn) {
+func (s *SOCKSProxy) handle(ctx context.Context, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
-	ctx := context.Background()
 
 	br := bufio.NewReader(conn)
 
@@ -76,7 +76,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	if !ok {
 		return
 	}
-	if !containsByte(methods, socksAuthUserPass) {
+	if !slices.Contains(methods, socksAuthUserPass) {
 		_, _ = conn.Write([]byte{socksVer5, socksAuthNoAccept})
 		return
 	}
@@ -92,12 +92,12 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	u, authed := s.Gate.VerifyCredentials(ctx, username, password)
 	if !authed {
 		_, _ = conn.Write([]byte{0x01, 0x01})
-		s.logEvent(ctx, 0, username, 0, "", "", "socks", "denied", "auth", 0, 0, 0, 0)
+		s.logEvent(ctx, storage.ProxyEvent{Username: username, Outcome: "denied", OutcomeReason: "auth"})
 		return
 	}
 	if !s.Gate.AllowProxyRequest(u.Username) {
 		_, _ = conn.Write([]byte{0x01, 0x01})
-		s.logEvent(ctx, u.ID, u.Username, 0, "", "", "socks", "denied", "ratelimit", 0, 0, 0, 0)
+		s.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, Outcome: "denied", OutcomeReason: "ratelimit"})
 		return
 	}
 	if _, err := conn.Write([]byte{0x01, 0x00}); err != nil {
@@ -116,7 +116,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 		}
 		if s.Blocklist.IsBlocked(host) {
 			_, _ = conn.Write(socksReply(socksRepHostUnreac))
-			s.logEvent(ctx, u.ID, u.Username, 0, "", target, "socks", "denied", "blocklist", 0, 0, 0, 0)
+			s.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, TargetHost: target, Outcome: "denied", OutcomeReason: "blocklist"})
 			return
 		}
 	}
@@ -124,7 +124,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	agent, err := s.Registry.PickNext()
 	if err != nil {
 		_, _ = conn.Write(socksReply(socksRepNetUnreach))
-		s.logEvent(ctx, u.ID, u.Username, 0, "", target, "socks", "failed", "no_agent", 0, 0, 0, 0)
+		s.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, TargetHost: target, Outcome: "failed", OutcomeReason: "no_agent"})
 		return
 	}
 
@@ -134,7 +134,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	cancel()
 	if err != nil {
 		_, _ = conn.Write(socksReply(socksRepHostUnreac))
-		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", "dial", 0, 0, 0, 0)
+		s.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, ClientID: agent.ID, ClientName: agent.Name, TargetHost: target, Outcome: "failed", OutcomeReason: "dial"})
 		return
 	}
 	defer func() { _ = upstream.Close() }()
@@ -143,12 +143,12 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	var reply tunnel.ProxyReply
 	if err := tunnel.ReadJSONLine(upReader, &reply); err != nil {
 		_, _ = conn.Write(socksReply(socksRepGeneralErr))
-		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", "reply", 0, 0, 0, 0)
+		s.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, ClientID: agent.ID, ClientName: agent.Name, TargetHost: target, Outcome: "failed", OutcomeReason: "reply"})
 		return
 	}
 	if !reply.OK {
 		_, _ = conn.Write(socksReply(socksRepConnRefuse))
-		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", "upstream", 0, 0, 0, 0)
+		s.logEvent(ctx, storage.ProxyEvent{UserID: u.ID, Username: u.Username, ClientID: agent.ID, ClientName: agent.Name, TargetHost: target, Outcome: "failed", OutcomeReason: "upstream"})
 		return
 	}
 	_ = upstream.SetDeadline(time.Time{})
@@ -171,49 +171,19 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 	}
 	bytesIn += drainBuffered(conn, upReader)
 
-	bytesIn, bytesOut = pipe(conn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
-	s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "ok", "",
-		bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
+	bytesIn, bytesOut = pipe(ctx, conn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
+	s.logEvent(ctx, storage.ProxyEvent{
+		UserID: u.ID, Username: u.Username,
+		ClientID: agent.ID, ClientName: agent.Name,
+		TargetHost: target, Outcome: "ok",
+		BytesIn: bytesIn, BytesOut: bytesOut,
+		DurationMS: time.Since(start).Milliseconds(), ConnectMS: connectMS,
+	})
 }
 
-func (s *SOCKSProxy) logEvent(ctx context.Context,
-	userID int64, user string,
-	clientID int64, clientName string,
-	target, proto, outcome, reason string,
-	bIn, bOut, durMS, connectMS int64) {
-	ev := storage.ProxyEvent{
-		TS:            time.Now(),
-		UserID:        userID,
-		Username:      user,
-		ClientID:      clientID,
-		ClientName:    clientName,
-		TargetHost:    target,
-		Protocol:      proto,
-		Outcome:       outcome,
-		OutcomeReason: reason,
-		BytesIn:       bIn,
-		BytesOut:      bOut,
-		DurationMS:    durMS,
-		ConnectMS:     connectMS,
-	}
-	id, err := s.Store.InsertProxyEvent(ctx, ev)
-	if err != nil {
-		s.Log.Warn("proxy event insert", "err", err)
-		return
-	}
-	if s.Hub != nil {
-		s.Hub.Publish(Event{
-			Type: "proxy_event",
-			Data: ProxyLogEvent{
-				ID: id, TS: ev.TS.Unix(),
-				User:     user,
-				ClientID: clientID, ClientName: clientName,
-				Target: target, Protocol: proto,
-				BytesIn: bIn, BytesOut: bOut,
-				DurationMS: durMS, ConnectMS: connectMS, Outcome: outcome,
-			},
-		})
-	}
+func (s *SOCKSProxy) logEvent(ctx context.Context, ev storage.ProxyEvent) {
+	ev.Protocol = "socks"
+	proxyEventSink{Store: s.Store, Log: s.Log, Hub: s.Hub}.record(ctx, ev)
 }
 
 func readGreeting(br *bufio.Reader) ([]byte, bool) {
@@ -311,13 +281,4 @@ func socksReply(status byte) []byte {
 	out = append(out, socksVer5, status, 0x00, socksAtypIPv4)
 	out = append(out, socksReplyZero...)
 	return out
-}
-
-func containsByte(b []byte, v byte) bool {
-	for _, c := range b {
-		if c == v {
-			return true
-		}
-	}
-	return false
 }

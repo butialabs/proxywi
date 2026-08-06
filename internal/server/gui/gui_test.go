@@ -15,7 +15,7 @@ import (
 
 func TestAuthRateLimit_AllowsThenBlocks(t *testing.T) {
 	dir := t.TempDir()
-	store, err := storage.Open(dir)
+	store, err := storage.Open(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestPostDelete_ReportsFailureInsteadOfRedirecting(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := storage.Open(t.TempDir())
+			store, err := storage.Open(t.Context(), t.TempDir())
 			if err != nil {
 				t.Fatalf("open store: %v", err)
 			}
