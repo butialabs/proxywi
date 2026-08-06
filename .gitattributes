@@ -1,0 +1,7 @@
+# Go tooling (gofmt, golangci-lint) is LF-only. Without this, a checkout with
+# core.autocrlf=true makes every .go file look unformatted to `gofmt -l`, which
+# hides real formatting problems in the noise.
+*.go text eol=lf
+*.sql text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf

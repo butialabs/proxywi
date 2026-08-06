@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -167,4 +169,56 @@ func TestInsertProxyEvent_OutcomeReason(t *testing.T) {
 func TestMain(m *testing.M) {
 	code := m.Run()
 	os.Exit(code)
+}
+
+func TestAllClientTokenHashes_RevocationRacingRefillIsNotCached(t *testing.T) {
+	s, cleanup := openTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	const rounds = 60
+	for i := 0; i < rounds; i++ {
+		id, err := s.CreateClient(ctx, fmt.Sprintf("victim-%d", i), "bcrypt-hash", fmt.Sprintf("sha-%d", i), fmt.Sprintf("tokenid-%d", i))
+		if err != nil {
+			t.Fatalf("create client: %v", err)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = s.AllClientTokenHashes(ctx)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = s.DeleteClient(ctx, id)
+		}()
+		wg.Wait()
+
+		hashes, err := s.AllClientTokenHashes(ctx)
+		if err != nil {
+			t.Fatalf("read hashes: %v", err)
+		}
+		if _, present := hashes[id]; present {
+			t.Fatalf("round %d: deleted client %d still served from the hash cache", i, id)
+		}
+	}
+}
+
+func TestAllClientTokenHashes_ExposesTokenID(t *testing.T) {
+	s, cleanup := openTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	id, err := s.CreateClient(ctx, "with-token-id", "bcrypt-hash", "", "abcdef0123456789")
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	hashes, err := s.AllClientTokenHashes(ctx)
+	if err != nil {
+		t.Fatalf("read hashes: %v", err)
+	}
+	if got := hashes[id].TokenID; got != "abcdef0123456789" {
+		t.Fatalf("TokenID = %q, want %q", got, "abcdef0123456789")
+	}
 }

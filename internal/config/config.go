@@ -52,7 +52,6 @@ func LoadServer() (Server, error) {
 	return s, nil
 }
 
-
 func LoadClient() (Client, error) {
 	c := Client{
 		Server:         os.Getenv("PROXYWI_SERVER"),
@@ -60,7 +59,7 @@ func LoadClient() (Client, error) {
 		TLSInsecure:    boolEnv("PROXYWI_TLS_INSECURE"),
 		AllowedTargets: splitEnv(os.Getenv("PROXYWI_ALLOWED_TARGETS")),
 		DeniedTargets:  splitEnv(os.Getenv("PROXYWI_DENIED_TARGETS")),
-		DoHProviders:  splitEnv(env("PROXYWI_DOH_PROVIDERS", "https://dns.nextdns.io,https://freedns.controld.com/p0")),
+		DoHProviders:   splitEnv(env("PROXYWI_DOH_PROVIDERS", "https://dns.nextdns.io,https://freedns.controld.com/p0")),
 	}
 	if c.Server == "" {
 		return c, fmt.Errorf("PROXYWI_SERVER is required")

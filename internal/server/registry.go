@@ -34,7 +34,6 @@ func (a *Agent) OpenProxyStream(ctx context.Context, target string) (net.Conn, e
 		_ = stream.Close()
 		return nil, fmt.Errorf("write request: %w", err)
 	}
-	_ = stream.SetDeadline(time.Time{})
 	return stream, nil
 }
 
@@ -117,4 +116,3 @@ func (r *Registry) PickNext() (*Agent, error) {
 }
 
 var ErrNoAgents = errors.New("no agents available")
-

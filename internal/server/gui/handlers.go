@@ -44,10 +44,30 @@ func (g *GUI) adminName(ctx context.Context) string {
 	if !ok {
 		return ""
 	}
-	row := g.Store.DB().QueryRowContext(ctx, `SELECT username FROM admins WHERE id = ?`, id)
-	var u string
-	_ = row.Scan(&u)
-	return u
+	username, err := g.Store.AdminUsernameByID(ctx, id)
+	if err != nil {
+		g.Log.Error("lookup admin name", "admin_id", id, "err", err)
+		return ""
+	}
+	return username
+}
+
+func (g *GUI) dbError(w http.ResponseWriter, op string, err error) bool {
+	if err == nil {
+		return false
+	}
+	g.Log.Error("store operation failed", "op", op, "err", err)
+	http.Error(w, "database error", http.StatusInternalServerError)
+	return true
+}
+
+func (g *GUI) badForm(w http.ResponseWriter, r *http.Request) bool {
+	if err := r.ParseForm(); err != nil {
+		g.Log.Warn("parse form", "path", r.URL.Path, "err", err)
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return true
+	}
+	return false
 }
 
 func (g *GUI) getLogin(w http.ResponseWriter, r *http.Request) {
@@ -56,7 +76,9 @@ func (g *GUI) getLogin(w http.ResponseWriter, r *http.Request) {
 
 func (g *GUI) postLogin(w http.ResponseWriter, r *http.Request) {
 	v := g.view(r)
-	_ = r.ParseForm()
+	if g.badForm(w, r) {
+		return
+	}
 	username := strings.TrimSpace(r.Form.Get("username"))
 	password := r.Form.Get("password")
 	admin, err := g.Store.AdminByUsername(r.Context(), username)
@@ -85,7 +107,9 @@ func (g *GUI) postLogin(w http.ResponseWriter, r *http.Request) {
 
 func (g *GUI) postLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
-		_ = g.Store.DeleteSession(r.Context(), c.Value)
+		if err := g.Store.DeleteSession(r.Context(), c.Value); err != nil {
+			g.Log.Warn("delete session", "err", err)
+		}
 	}
 	g.clearSession(w)
 	http.Redirect(w, r, "/login", http.StatusFound)
@@ -128,11 +152,17 @@ func (g *GUI) getDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	p := periodDefs[periodKey]
 
-	allClients, _ := g.Store.ListClients(ctx)
+	allClients, err := g.Store.ListClients(ctx)
+	if g.dbError(w, "list clients", err) {
+		return
+	}
 
 	since := time.Now().Add(-p.duration)
 	mf := storage.MetricsFilter{Since: since, BucketSeconds: int64(p.bucket.Seconds())}
-	samples, _ := g.Store.Metrics(ctx, mf)
+	samples, err := g.Store.Metrics(ctx, mf)
+	if g.dbError(w, "metrics", err) {
+		return
+	}
 
 	buckets := make(map[int64][2]int64, len(samples))
 	for _, s := range samples {
@@ -203,7 +233,10 @@ const composeTokenPlaceholder = "<paste-your-token-here>"
 func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	v := g.view(r)
-	list, _ := g.Store.ListClients(ctx)
+	list, err := g.Store.ListClients(ctx)
+	if g.dbError(w, "list clients", err) {
+		return
+	}
 	views := make([]clientView, 0, len(list))
 	for _, c := range list {
 		_, online := g.Registry.Get(c.ID)
@@ -234,11 +267,15 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 			"confirmTpl": v.tr("clients.confirm_regenerate"),
 		},
 	}
-	
+
 	tok := g.getFlashToken(w, r)
 	if tok != "" {
 		if id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64); err == nil {
-			if c, _ := g.Store.ClientByID(ctx, id); c != nil {
+			c, err := g.Store.ClientByID(ctx, id)
+			if g.dbError(w, "client by id", err) {
+				return
+			}
+			if c != nil {
 				data["NewCompose"] = buildCompose(controlURL(r), tok)
 				data["NewComposeName"] = c.Name
 			}
@@ -339,7 +376,9 @@ func (g *GUI) postDeleteClient(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	_ = g.Store.DeleteClient(r.Context(), id)
+	if g.dbError(w, "delete client", g.Store.DeleteClient(r.Context(), id)) {
+		return
+	}
 	http.Redirect(w, r, "/clients", http.StatusFound)
 }
 
@@ -352,8 +391,14 @@ type accessView struct {
 
 func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	list, _ := g.Store.ListUsers(ctx)
-	usage, _ := g.Store.UserUsageStats(ctx)
+	list, err := g.Store.ListUsers(ctx)
+	if g.dbError(w, "list users", err) {
+		return
+	}
+	usage, err := g.Store.UserUsageStats(ctx)
+	if g.dbError(w, "user usage stats", err) {
+		return
+	}
 
 	views := make([]accessView, 0, len(list))
 	for _, u := range list {
@@ -382,7 +427,9 @@ func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *GUI) postNewAccess(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
+	if g.badForm(w, r) {
+		return
+	}
 	username := strings.TrimSpace(r.Form.Get("username"))
 	password := r.Form.Get("password")
 	if username == "" || password == "" {
@@ -408,7 +455,9 @@ func (g *GUI) postEditAccess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	_ = r.ParseForm()
+	if g.badForm(w, r) {
+		return
+	}
 	username := strings.TrimSpace(r.Form.Get("username"))
 	password := r.Form.Get("password")
 
@@ -435,7 +484,9 @@ func (g *GUI) postDeleteAccess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	_ = g.Store.DeleteUser(r.Context(), id)
+	if g.dbError(w, "delete user", g.Store.DeleteUser(r.Context(), id)) {
+		return
+	}
 	http.Redirect(w, r, "/access", http.StatusFound)
 }
 
@@ -500,7 +551,10 @@ func (g *GUI) getGlobalStats(w http.ResponseWriter, r *http.Request) {
 		since = time.Now().Add(-7 * 24 * time.Hour)
 	}
 
-	domainStats, _ := g.Store.DomainStats(ctx, 0, since)
+	domainStats, err := g.Store.DomainStats(ctx, 0, since)
+	if g.dbError(w, "domain stats", err) {
+		return
+	}
 	views := make([]domainStatView, 0, len(domainStats))
 	for _, s := range domainStats {
 		views = append(views, domainStatView{
@@ -555,7 +609,6 @@ func (g *GUI) postResetStats(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/stats", http.StatusSeeOther)
 }
 
-
 func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	since := time.Now().Add(-24 * time.Hour)
@@ -577,7 +630,10 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := (page - 1) * logsPageSize
 
-	total, _ := g.Store.CountProxyEventsFiltered(ctx, filter)
+	total, err := g.Store.CountProxyEventsFiltered(ctx, filter)
+	if g.dbError(w, "count proxy events", err) {
+		return
+	}
 	totalPages := (total + logsPageSize - 1) / logsPageSize
 	if totalPages < 1 {
 		totalPages = 1
@@ -587,7 +643,10 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 		offset = (page - 1) * logsPageSize
 	}
 
-	events, _ := g.Store.ListProxyEventsFiltered(ctx, filter, logsPageSize, offset)
+	events, err := g.Store.ListProxyEventsFiltered(ctx, filter, logsPageSize, offset)
+	if g.dbError(w, "list proxy events", err) {
+		return
+	}
 	views := make([]logView, 0, len(events))
 	for _, e := range events {
 		views = append(views, logView{
@@ -605,12 +664,18 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 			ConnectMS:    e.ConnectMS,
 		})
 	}
-	clients, _ := g.Store.ListClients(ctx)
+	clients, err := g.Store.ListClients(ctx)
+	if g.dbError(w, "list clients", err) {
+		return
+	}
 	clientOpts := make([]clientOption, 0, len(clients))
 	for _, c := range clients {
 		clientOpts = append(clientOpts, clientOption{ID: c.ID, Name: c.Name})
 	}
-	users, _ := g.Store.ListUsers(ctx)
+	users, err := g.Store.ListUsers(ctx)
+	if g.dbError(w, "list users", err) {
+		return
+	}
 	userOpts := make([]clientOption, 0, len(users))
 	for _, u := range users {
 		userOpts = append(userOpts, clientOption{ID: u.ID, Name: u.Username})
@@ -716,4 +781,3 @@ func humanSince(t time.Time) string {
 	}
 	return humanDuration(time.Since(t)) + " ago"
 }
-

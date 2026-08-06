@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"html/template"
 	"io"
+	"sync"
 
 	"github.com/butialabs/proxywi/internal/i18n"
 )
@@ -15,30 +16,24 @@ import (
 //go:embed templates/*.html
 var templatesFS embed.FS
 
-//go:embed dist/css/app.min.css
-var appCSS string
-
-//go:embed dist/js/app.min.js
-var appJS string
-
 //go:embed dist
 var staticFS embed.FS
 
-// assetVer is a short content-hash used as a cache-busting query param for
+// assetVer is a short content hash used as a cache-busting query param for the
 // CSS/JS/SVG assets. It changes whenever any of those files is rebuilt.
-var assetVer string
-
-func init() {
+var assetVer = sync.OnceValue(func() string {
 	h := fnv.New64a()
-	h.Write([]byte(appCSS))
-	h.Write([]byte(appJS))
-	for _, path := range []string{"dist/img/icons.svg"} {
+	for _, path := range []string{
+		"dist/css/app.min.css",
+		"dist/js/app.min.js",
+		"dist/img/icons.svg",
+	} {
 		if data, err := staticFS.ReadFile(path); err == nil {
-			h.Write(data)
+			_, _ = h.Write(data)
 		}
 	}
-	assetVer = fmt.Sprintf("%x", h.Sum64())[:8]
-}
+	return fmt.Sprintf("%016x", h.Sum64())[:8]
+})
 
 type templates struct {
 	layout []byte
@@ -74,11 +69,9 @@ func (t *templates) render(w io.Writer, name string, tr i18n.Translator, data an
 		return fmt.Errorf("unknown template %q", name)
 	}
 	funcs := template.FuncMap{
-		"t":      func(key string) string { return tr(key) },
-		"tp":     func(key string, params any) string { return expandParams(tr(key), params) },
-		"appCSS": func() template.CSS { return template.CSS(appCSS) },
-		"appJS":  func() template.JS { return template.JS(appJS) },
-		"ver":    func() string { return assetVer },
+		"t":   func(key string) string { return tr(key) },
+		"tp":  func(key string, params any) string { return expandParams(tr(key), params) },
+		"ver": func() string { return assetVer() },
 		"json": func(v any) (template.JS, error) {
 			b, err := json.Marshal(v)
 			if err != nil {

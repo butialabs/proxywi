@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -38,18 +39,13 @@ type tokenCacheEntry struct {
 	cachedAt  int64
 }
 
-const cacheSessionTTL = 60 // seconds before re-validating from DB
-
-// ClientHashes holds both hash representations for a client token.
-// Bcrypt is kept for backward compatibility with existing rows.
-// SHA256 is the fast-path hash populated for all new or migrated rows.
+const cacheSessionTTL = 60
 type ClientHashes struct {
-	Bcrypt string
-	SHA256 string
+	Bcrypt  string
+	SHA256  string
+	TokenID string
 }
 
-// SHA256Token returns hex(sha256(token)). Tokens are random 128-bit strings,
-// so SHA-256 without a salt provides adequate security.
 func SHA256Token(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
@@ -57,11 +53,12 @@ func SHA256Token(token string) string {
 
 type Store struct {
 	db           *sql.DB
-	sessionCache sync.Map // string -> sessionCacheEntry
-	tokenCache   sync.Map // string -> tokenCacheEntry
+	sessionCache sync.Map
+	tokenCache   sync.Map
 	hashCacheMu  sync.RWMutex
 	hashCache    map[int64]ClientHashes
 	hashCacheOK  bool
+	hashCacheGen uint64
 }
 
 func Open(dataDir string) (*Store, error) {
@@ -138,8 +135,6 @@ func migrationFloor(src interface {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) DB() *sql.DB { return s.db }
-
 type Admin struct {
 	ID           int64
 	Username     string
@@ -162,6 +157,18 @@ func (s *Store) AdminByUsername(ctx context.Context, username string) (*Admin, e
 	return &a, nil
 }
 
+func (s *Store) AdminUsernameByID(ctx context.Context, id int64) (string, error) {
+	var username string
+	err := s.db.QueryRowContext(ctx, `SELECT username FROM admins WHERE id = ?`, id).Scan(&username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return username, nil
+}
+
 func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM admins`).Scan(&n)
@@ -170,14 +177,6 @@ func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 
 var ErrAlreadyConfigured = errors.New("already configured")
 
-func (s *Store) CreateAdmin(ctx context.Context, username, email, passwordHash string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO admins (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)`,
-		username, email, passwordHash, time.Now().Unix())
-	return err
-}
-
-// CreateFirstAdmin creates the first admin atomically. If any admin already
-// exists, it returns ErrAlreadyConfigured.
 func (s *Store) CreateFirstAdmin(ctx context.Context, username, email, passwordHash string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -199,49 +198,6 @@ func (s *Store) CreateFirstAdmin(ctx context.Context, username, email, passwordH
 		return err
 	}
 	return tx.Commit()
-}
-
-func (s *Store) ListAdmins(ctx context.Context) ([]Admin, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, username, email, password_hash, created_at FROM admins ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []Admin
-	for rows.Next() {
-		var a Admin
-		var ts int64
-		if err := rows.Scan(&a.ID, &a.Username, &a.Email, &a.PasswordHash, &ts); err != nil {
-			return nil, err
-		}
-		a.CreatedAt = time.Unix(ts, 0).UTC()
-		out = append(out, a)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) UpdateAdmin(ctx context.Context, id int64, newUsername, newEmail, newPasswordHash string) error {
-	sets := []string{}
-	args := []any{}
-	if newUsername != "" {
-		sets = append(sets, "username = ?")
-		args = append(args, newUsername)
-	}
-	if newEmail != "" {
-		sets = append(sets, "email = ?")
-		args = append(args, newEmail)
-	}
-	if newPasswordHash != "" {
-		sets = append(sets, "password_hash = ?")
-		args = append(args, newPasswordHash)
-	}
-	if len(sets) == 0 {
-		return nil
-	}
-	args = append(args, id)
-	q := `UPDATE admins SET ` + strings.Join(sets, ", ") + ` WHERE id = ?`
-	_, err := s.db.ExecContext(ctx, q, args...)
-	return err
 }
 
 func (s *Store) CreateSession(ctx context.Context, adminID int64, ttl time.Duration) (string, error) {
@@ -360,7 +316,6 @@ func (s *Store) CreateClient(ctx context.Context, name, tokenHash, tokenHashSHA2
 	return res.LastInsertId()
 }
 
-// clientNameRe matches the auto-generated adjective-adjective-noun format.
 var clientNameRe = regexp.MustCompile(`^[a-z]+-[a-z]+-[a-z]+$`)
 
 func (s *Store) clientNameExists(ctx context.Context, name string) (bool, error) {
@@ -369,7 +324,6 @@ func (s *Store) clientNameExists(ctx context.Context, name string) (bool, error)
 	return n > 0, err
 }
 
-// GenerateUniqueClientName returns a fresh 3-word pet name not yet used by any client.
 func (s *Store) GenerateUniqueClientName(ctx context.Context) (string, error) {
 	for i := 0; i < 50; i++ {
 		name := petname.Generate(3, "-")
@@ -384,8 +338,6 @@ func (s *Store) GenerateUniqueClientName(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("could not generate a unique client name")
 }
 
-// NormalizeLegacyClientNames renames any client whose name predates the
-// generated adjective-adjective-noun format. Idempotent.
 func (s *Store) NormalizeLegacyClientNames(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM clients`)
 	if err != nil {
@@ -490,16 +442,14 @@ func (s *Store) ClientByTokenID(ctx context.Context, tokenID string) (*Client, e
 func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]ClientHashes, error) {
 	s.hashCacheMu.RLock()
 	if s.hashCacheOK {
-		out := make(map[int64]ClientHashes, len(s.hashCache))
-		for k, v := range s.hashCache {
-			out[k] = v
-		}
+		out := maps.Clone(s.hashCache)
 		s.hashCacheMu.RUnlock()
 		return out, nil
 	}
+	gen := s.hashCacheGen
 	s.hashCacheMu.RUnlock()
 
-	rows, err := s.db.QueryContext(ctx, `SELECT id, token_hash, COALESCE(token_hash_sha256,'') FROM clients`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, token_hash, COALESCE(token_hash_sha256,''), COALESCE(token_id,'') FROM clients`)
 	if err != nil {
 		return nil, err
 	}
@@ -508,7 +458,7 @@ func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]ClientHashe
 	for rows.Next() {
 		var id int64
 		var h ClientHashes
-		if err := rows.Scan(&id, &h.Bcrypt, &h.SHA256); err != nil {
+		if err := rows.Scan(&id, &h.Bcrypt, &h.SHA256, &h.TokenID); err != nil {
 			return nil, err
 		}
 		out[id] = h
@@ -517,8 +467,10 @@ func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]ClientHashe
 		return nil, err
 	}
 	s.hashCacheMu.Lock()
-	s.hashCache = out
-	s.hashCacheOK = true
+	if s.hashCacheGen == gen {
+		s.hashCache = out
+		s.hashCacheOK = true
+	}
 	s.hashCacheMu.Unlock()
 	return out, nil
 }
@@ -526,6 +478,8 @@ func (s *Store) AllClientTokenHashes(ctx context.Context) (map[int64]ClientHashe
 func (s *Store) invalidateHashCache() {
 	s.hashCacheMu.Lock()
 	s.hashCacheOK = false
+	s.hashCache = nil
+	s.hashCacheGen++
 	s.hashCacheMu.Unlock()
 }
 
@@ -665,14 +619,11 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	return err
 }
 
-// UserUsage summarizes proxy activity for a proxy-access user.
 type UserUsage struct {
 	Count    int
 	LastUsed time.Time
 }
 
-// UserUsageStats returns per-user request counts and last-used time, derived
-// from proxy_events.
 func (s *Store) UserUsageStats(ctx context.Context) (map[int64]UserUsage, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT user_id, COUNT(*), MAX(ts) FROM proxy_events WHERE user_id IS NOT NULL GROUP BY user_id`)
@@ -717,7 +668,6 @@ type MetricsFilter struct {
 	Since         time.Time
 	Until         time.Time
 	ClientID      int64
-	ClientIDs     []int64
 	BucketSeconds int64
 }
 
@@ -737,11 +687,6 @@ func (s *Store) Metrics(ctx context.Context, f MetricsFilter) ([]MetricPoint, er
 	if f.ClientID > 0 {
 		q += ` AND client_id = ?`
 		args = append(args, f.ClientID)
-	} else if len(f.ClientIDs) > 0 {
-		q += ` AND client_id IN (` + placeholders(len(f.ClientIDs)) + `)`
-		for _, id := range f.ClientIDs {
-			args = append(args, id)
-		}
 	}
 	q += ` GROUP BY b ORDER BY b`
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -758,10 +703,6 @@ func (s *Store) Metrics(ctx context.Context, f MetricsFilter) ([]MetricPoint, er
 		out = append(out, p)
 	}
 	return out, rows.Err()
-}
-
-func (s *Store) RecentMetrics(ctx context.Context, since time.Time) ([]MetricPoint, error) {
-	return s.Metrics(ctx, MetricsFilter{Since: since})
 }
 
 func (s *Store) PurgeOldData(ctx context.Context, cutoff time.Time) (int64, error) {
@@ -785,7 +726,26 @@ func (s *Store) PurgeOldData(ctx context.Context, cutoff time.Time) (int64, erro
 			total += n
 		}
 	}
+	s.sweepSessionCaches(now)
 	return total, nil
+}
+
+func (s *Store) sweepSessionCaches(now int64) {
+	stale := func(expiresAt, cachedAt int64) bool {
+		return now >= expiresAt || now-cachedAt >= cacheSessionTTL
+	}
+	s.sessionCache.Range(func(k, v any) bool {
+		if e, ok := v.(sessionCacheEntry); !ok || stale(e.expiresAt, e.cachedAt) {
+			s.sessionCache.Delete(k)
+		}
+		return true
+	})
+	s.tokenCache.Range(func(k, v any) bool {
+		if e, ok := v.(tokenCacheEntry); !ok || stale(e.expiresAt, e.cachedAt) {
+			s.tokenCache.Delete(k)
+		}
+		return true
+	})
 }
 
 type ProxyEvent struct {
@@ -835,14 +795,6 @@ func (s *Store) ListProxyEvents(ctx context.Context, since time.Time, limit int)
 		limit = 200
 	}
 	return s.ListProxyEventsFiltered(ctx, ProxyEventFilter{Since: since}, limit, 0)
-}
-
-func (s *Store) ListProxyEventsPage(ctx context.Context, since time.Time, limit, offset int) ([]ProxyEvent, error) {
-	return s.ListProxyEventsFiltered(ctx, ProxyEventFilter{Since: since}, limit, offset)
-}
-
-func (s *Store) CountProxyEvents(ctx context.Context, since time.Time) (int, error) {
-	return s.CountProxyEventsFiltered(ctx, ProxyEventFilter{Since: since})
 }
 
 type ProxyEventFilter struct {
@@ -946,7 +898,6 @@ type DomainStat struct {
 	AvgConnectMS  int64
 }
 
-// DomainStats returns per-domain aggregates. clientID=0 returns all clients.
 func (s *Store) DomainStats(ctx context.Context, clientID int64, since time.Time) ([]DomainStat, error) {
 	var rows *sql.Rows
 	var err error
@@ -1079,13 +1030,6 @@ func (s *Store) LoadBlockedDomains(ctx context.Context) (map[string]bool, error)
 		out[d] = true
 	}
 	return out, rows.Err()
-}
-
-func placeholders(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	return strings.Repeat("?,", n-1) + "?"
 }
 
 func randomHex(n int) string {

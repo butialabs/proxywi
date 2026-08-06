@@ -151,6 +151,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 		s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "failed", "upstream", 0, 0, 0, 0)
 		return
 	}
+	_ = upstream.SetDeadline(time.Time{})
 	connectMS := time.Since(dialStart).Milliseconds()
 
 	if _, err := conn.Write(socksReply(socksRepSuccess)); err != nil {
@@ -168,6 +169,7 @@ func (s *SOCKSProxy) handle(conn net.Conn) {
 			bytesOut += int64(buffered)
 		}
 	}
+	bytesIn += drainBuffered(conn, upReader)
 
 	bytesIn, bytesOut = pipe(conn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
 	s.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "socks", "ok", "",
@@ -204,7 +206,7 @@ func (s *SOCKSProxy) logEvent(ctx context.Context,
 			Type: "proxy_event",
 			Data: ProxyLogEvent{
 				ID: id, TS: ev.TS.Unix(),
-				User: user,
+				User:     user,
 				ClientID: clientID, ClientName: clientName,
 				Target: target, Protocol: proto,
 				BytesIn: bIn, BytesOut: bOut,

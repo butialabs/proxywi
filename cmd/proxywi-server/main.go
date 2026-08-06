@@ -20,6 +20,7 @@ import (
 	"github.com/butialabs/proxywi/internal/server/gui"
 	"github.com/butialabs/proxywi/internal/storage"
 	"github.com/butialabs/proxywi/internal/tunnel"
+	"github.com/butialabs/proxywi/internal/version"
 	"github.com/pires/go-proxyproto"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -44,6 +45,9 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	ctx, stopWorkers := context.WithCancel(ctx)
+	defer stopWorkers()
+
 	cfg, err := config.LoadServer()
 	if err != nil {
 		return err
@@ -81,7 +85,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	reg := server.NewRegistry()
-	gate := server.DefaultAuthGate(store, log, cfg.RateLimitMax, cfg.RateLimitWindow)
+	gate := server.DefaultAuthGate(ctx, store, log, cfg.RateLimitMax, cfg.RateLimitWindow)
 	hub := server.NewHub()
 
 	control := &server.Control{
@@ -107,7 +111,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Registry: reg, Gate: gate, Store: store, Log: log, Hub: hub, Blocklist: bl,
 	}
 
-	guiApp, err := gui.New(store, reg, hub, cfg, log)
+	guiApp, err := gui.New(ctx, store, reg, hub, cfg, log)
 	if err != nil {
 		return err
 	}
@@ -199,6 +203,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go func() { defer wg.Done(); runBlocklistRefresh(ctx, cfg, store, bl, log) }()
 
 	log.Info("proxywi server up",
+		"version", version.Version,
 		"http", cfg.HTTPAddr, "socks", cfg.SOCKSAddr, "main", cfg.MainAddr,
 		"main_domain", cfg.MainDomain,
 		"retention_days", int(retentionWindow/(24*time.Hour)))
@@ -210,6 +215,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 			log.Error("subsystem failed", "err", err)
 		}
 	}
+
+	stopWorkers()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

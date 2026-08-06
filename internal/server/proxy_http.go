@@ -113,6 +113,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "upstream", 0, 0, 0, 0)
 		return
 	}
+	_ = upstream.SetDeadline(time.Time{})
 	connectMS := time.Since(dialStart).Milliseconds()
 
 	hj, ok := w.(http.Hijacker)
@@ -146,6 +147,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				bytesOut += int64(buffered)
 			}
 		}
+		bytesIn += drainBuffered(clientConn, upReader)
 
 		bytesIn, bytesOut = pipe(clientConn, upstream, bytesIn, bytesOut, proxyIdleTimeout)
 		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "ok", "",
@@ -164,7 +166,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	bytesOut += reqBytes.n
 
-	resp, err := http.ReadResponse(bufio.NewReader(upstream), r)
+	resp, err := http.ReadResponse(upReader, r)
 	if err != nil {
 		p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "failed", "reply",
 			bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
@@ -184,6 +186,22 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	p.logEvent(ctx, u.ID, u.Username, agent.ID, agent.Name, target, "http", "ok", "",
 		bytesIn, bytesOut, time.Since(start).Milliseconds(), connectMS)
+}
+
+func drainBuffered(dst io.Writer, br *bufio.Reader) int64 {
+	n := br.Buffered()
+	if n <= 0 {
+		return 0
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(br, buf); err != nil {
+		return 0
+	}
+	written, err := dst.Write(buf)
+	if err != nil {
+		return int64(written)
+	}
+	return int64(written)
 }
 
 type countingWriter struct {
@@ -252,7 +270,7 @@ func (p *HTTPProxy) logEvent(ctx context.Context,
 			Type: "proxy_event",
 			Data: ProxyLogEvent{
 				ID: id, TS: ev.TS.Unix(),
-				User: user,
+				User:     user,
 				ClientID: clientID, ClientName: clientName,
 				Target: target, Protocol: proto,
 				BytesIn: bIn, BytesOut: bOut,
@@ -330,4 +348,3 @@ func parseProxyAuth(h string) (user, pass string, ok bool) {
 	}
 	return s[:i], s[i+1:], true
 }
-

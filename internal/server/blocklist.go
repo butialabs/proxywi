@@ -33,13 +33,6 @@ func (b *Blocklist) Replace(domains map[string]bool) {
 	b.mu.Unlock()
 }
 
-func (b *Blocklist) Len() int {
-	b.mu.RLock()
-	n := len(b.domains)
-	b.mu.RUnlock()
-	return n
-}
-
 var DefaultBlocklistURLs = map[string]string{
 	"adult":    "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn/hosts",
 	"gambling": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/gambling/hosts",

@@ -140,6 +140,9 @@ func (c *Control) readMetaStream(ctx context.Context, agent *Agent) {
 	}
 	defer func() { _ = stream.Close() }()
 
+	ctx, stopKeepalive := context.WithCancel(ctx)
+	defer stopKeepalive()
+
 	var writeMu sync.Mutex
 	sendMsg := func(msg tunnel.MetaMessage) error {
 		writeMu.Lock()
@@ -209,7 +212,7 @@ func (c *Control) authenticateToken(ctx context.Context, token string) (int64, *
 					return cl.ID, cl, nil
 				}
 			} else if bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
-				go func() { _ = c.Store.SetClientTokenSHA256(context.Background(), cl.ID, sha256h) }()
+				go c.migrateTokenHash(cl.ID, sha256h)
 				return cl.ID, cl, nil
 			}
 		}
@@ -230,16 +233,25 @@ func (c *Control) authenticateToken(ctx context.Context, token string) (int64, *
 		}
 	}
 	for id, h := range hashes {
-		if h.SHA256 == "" && bcrypt.CompareHashAndPassword([]byte(h.Bcrypt), []byte(token)) == nil {
+		if h.SHA256 != "" || h.TokenID != "" {
+			continue
+		}
+		if bcrypt.CompareHashAndPassword([]byte(h.Bcrypt), []byte(token)) == nil {
 			cl, err := c.Store.ClientByID(ctx, id)
 			if err != nil || cl == nil {
 				return 0, nil, errors.New("client vanished")
 			}
-			go func(clientID int64) { _ = c.Store.SetClientTokenSHA256(context.Background(), clientID, sha256h) }(id)
+			go c.migrateTokenHash(id, sha256h)
 			return id, cl, nil
 		}
 	}
 	return 0, nil, errors.New("no matching token")
+}
+
+func (c *Control) migrateTokenHash(clientID int64, sha256h string) {
+	if err := c.Store.SetClientTokenSHA256(context.Background(), clientID, sha256h); err != nil {
+		c.Log.Warn("backfill client token sha256", "client_id", clientID, "err", err)
+	}
 }
 
 func writeAck(ctx context.Context, ws *websocket.Conn, ack tunnel.HandshakeAck) error {

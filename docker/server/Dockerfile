@@ -9,8 +9,10 @@ COPY internal/i18n        ./internal/i18n
 COPY internal/server      ./internal/server
 COPY internal/storage     ./internal/storage
 COPY internal/tunnel      ./internal/tunnel
+COPY internal/version     ./internal/version
+ARG BUILD_VERSION=dev
 ENV CGO_ENABLED=0
-RUN go build -trimpath -ldflags="-s -w" -o /out/proxywi-server ./cmd/proxywi-server
+RUN go build -trimpath -ldflags="-s -w -X github.com/butialabs/proxywi/internal/version.Version=${BUILD_VERSION}" -o /out/proxywi-server ./cmd/proxywi-server
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates && mkdir -p /data /config

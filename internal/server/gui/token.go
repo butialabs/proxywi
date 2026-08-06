@@ -28,7 +28,7 @@ func (g *GUI) clientByToken(ctx context.Context, token string) (*storage.Client,
 					return cl, nil
 				}
 			} else if bcrypt.CompareHashAndPassword([]byte(cl.TokenHash), []byte(token)) == nil {
-				go func() { _ = g.Store.SetClientTokenSHA256(context.Background(), cl.ID, sha256h) }()
+				go g.migrateTokenHash(cl.ID, sha256h)
 				return cl, nil
 			}
 		}
@@ -44,16 +44,25 @@ func (g *GUI) clientByToken(ctx context.Context, token string) (*storage.Client,
 		}
 	}
 	for id, h := range hashes {
-		if h.SHA256 == "" && bcrypt.CompareHashAndPassword([]byte(h.Bcrypt), []byte(token)) == nil {
+		if h.SHA256 != "" || h.TokenID != "" {
+			continue
+		}
+		if bcrypt.CompareHashAndPassword([]byte(h.Bcrypt), []byte(token)) == nil {
 			cl, err := g.Store.ClientByID(ctx, id)
 			if err != nil {
 				return nil, err
 			}
-			go func(clientID int64) { _ = g.Store.SetClientTokenSHA256(context.Background(), clientID, sha256h) }(id)
+			go g.migrateTokenHash(id, sha256h)
 			return cl, nil
 		}
 	}
 	return nil, nil
+}
+
+func (g *GUI) migrateTokenHash(clientID int64, sha256h string) {
+	if err := g.Store.SetClientTokenSHA256(context.Background(), clientID, sha256h); err != nil {
+		g.Log.Warn("backfill client token sha256", "client_id", clientID, "err", err)
+	}
 }
 
 func (g *GUI) getTokenLogin(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +72,9 @@ func (g *GUI) getTokenLogin(w http.ResponseWriter, r *http.Request) {
 
 func (g *GUI) postTokenLogin(w http.ResponseWriter, r *http.Request) {
 	v := g.view(r)
-	_ = r.ParseForm()
+	if g.badForm(w, r) {
+		return
+	}
 	token := r.Form.Get("token")
 	client, err := g.clientByToken(r.Context(), token)
 	if err != nil {
@@ -86,7 +97,9 @@ func (g *GUI) postTokenLogin(w http.ResponseWriter, r *http.Request) {
 
 func (g *GUI) postTokenLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(tokenSessionCookie); err == nil {
-		_ = g.Store.DeleteTokenSession(r.Context(), c.Value)
+		if err := g.Store.DeleteTokenSession(r.Context(), c.Value); err != nil {
+			g.Log.Warn("delete token session", "err", err)
+		}
 	}
 	g.clearTokenSession(w)
 	http.Redirect(w, r, "/token-login", http.StatusFound)
@@ -110,14 +123,20 @@ func (g *GUI) getTokenLogs(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/token-login", http.StatusFound)
 		return
 	}
-	client, _ := g.Store.ClientByID(ctx, clientID)
+	client, err := g.Store.ClientByID(ctx, clientID)
+	if g.dbError(w, "client by id", err) {
+		return
+	}
 	clientName := ""
 	if client != nil {
 		clientName = client.Name
 	}
 
 	since := time.Now().Add(-24 * time.Hour)
-	events, _ := g.Store.ListProxyEventsFiltered(ctx, storage.ProxyEventFilter{ClientID: clientID, Since: since}, 200, 0)
+	events, err := g.Store.ListProxyEventsFiltered(ctx, storage.ProxyEventFilter{ClientID: clientID, Since: since}, 200, 0)
+	if g.dbError(w, "list proxy events", err) {
+		return
+	}
 	views := make([]tokenLogView, 0, len(events))
 	for _, e := range events {
 		views = append(views, tokenLogView{
@@ -156,7 +175,10 @@ func (g *GUI) getTokenStats(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/token-login", http.StatusFound)
 		return
 	}
-	client, _ := g.Store.ClientByID(ctx, clientID)
+	client, err := g.Store.ClientByID(ctx, clientID)
+	if g.dbError(w, "client by id", err) {
+		return
+	}
 	clientName := ""
 	if client != nil {
 		clientName = client.Name
@@ -172,7 +194,10 @@ func (g *GUI) getTokenStats(w http.ResponseWriter, r *http.Request) {
 		since = time.Now().Add(-7 * 24 * time.Hour)
 	}
 
-	domainStats, _ := g.Store.DomainStats(ctx, clientID, since)
+	domainStats, err := g.Store.DomainStats(ctx, clientID, since)
+	if g.dbError(w, "domain stats", err) {
+		return
+	}
 	views := make([]domainStatView, 0, len(domainStats))
 	for _, s := range domainStats {
 		views = append(views, domainStatView{

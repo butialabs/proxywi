@@ -139,15 +139,15 @@ func (a *Agent) handleStream(ctx context.Context, stream net.Conn, c *counters) 
 		return
 	}
 
-	if !a.isTargetAllowed(ctx, req.Target) {
+	dialAddr, allowed := a.resolveAllowedTarget(ctx, req.Target)
+	if !allowed {
 		a.Log.Warn("target blocked by ACL", "target", req.Target)
 		_ = tunnel.WriteJSONLine(stream, tunnel.ProxyReply{OK: false, Error: "target not allowed"})
 		return
 	}
 
-	a.initACL()
 	dialer := &net.Dialer{Timeout: 10 * time.Second, Resolver: a.resolver}
-	target, err := dialer.DialContext(ctx, "tcp", req.Target)
+	target, err := dialer.DialContext(ctx, "tcp", dialAddr)
 	if err != nil {
 		_ = tunnel.WriteJSONLine(stream, tunnel.ProxyReply{OK: false, Error: err.Error()})
 		return
@@ -251,8 +251,8 @@ func mustJSON(v any) []byte {
 }
 
 type targetACL struct {
-	deniedNets  []netip.Prefix
-	allowedNets []netip.Prefix
+	deniedNets   []netip.Prefix
+	allowedNets  []netip.Prefix
 	allowedHosts map[string]bool
 	deniedHosts  map[string]bool
 }
@@ -324,45 +324,60 @@ func parseHosts(items []string) map[string]bool {
 	return out
 }
 
-func (a *Agent) isTargetAllowed(ctx context.Context, target string) bool {
+func (a *Agent) resolveAllowedTarget(ctx context.Context, target string) (string, bool) {
 	a.initACL()
 	if target == "" {
-		return false
+		return "", false
 	}
-	host, _, err := net.SplitHostPort(target)
+	host, port, err := net.SplitHostPort(target)
 	if err != nil {
-		host = target
+		host, port = target, ""
 	}
 	host = strings.ToLower(strings.TrimSpace(host))
 
-	// Explicit host allowlist takes precedence.
-	if a.acl.allowedHosts[host] {
-		return true
-	}
+	explicitlyAllowed := a.acl.allowedHosts[host]
 
 	addrs, err := a.resolver.LookupIPAddr(ctx, host)
 	if err != nil {
-		// Cannot resolve: treat as external domain unless explicitly denied.
-		return !a.acl.deniedHosts[host]
+		if a.acl.deniedHosts[host] {
+			return "", false
+		}
+		return target, true
 	}
 
+	var chosen netip.Addr
 	for _, ia := range addrs {
 		addr, ok := netip.AddrFromSlice(ia.IP)
 		if !ok {
 			continue
 		}
-		for _, p := range a.acl.allowedNets {
-			if p.Contains(addr) {
-				return true
-			}
+		addr = addr.Unmap()
+		if !explicitlyAllowed && a.isDeniedAddr(addr) {
+			return "", false
 		}
-		for _, p := range a.acl.deniedNets {
-			if p.Contains(addr) {
-				return a.acl.allowedHosts[host]
-			}
+		if !chosen.IsValid() {
+			chosen = addr
 		}
 	}
-	return true
+	if !chosen.IsValid() {
+		return "", false
+	}
+	if port == "" {
+		return chosen.String(), true
+	}
+	return net.JoinHostPort(chosen.String(), port), true
 }
 
-
+func (a *Agent) isDeniedAddr(addr netip.Addr) bool {
+	for _, p := range a.acl.allowedNets {
+		if p.Contains(addr) {
+			return false
+		}
+	}
+	for _, p := range a.acl.deniedNets {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}

@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"context"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -26,12 +27,12 @@ type GUI struct {
 	tpl *templates
 }
 
-func New(store *storage.Store, reg *server.Registry, hub *server.Hub, cfg config.Server, log *slog.Logger) (*GUI, error) {
+func New(ctx context.Context, store *storage.Store, reg *server.Registry, hub *server.Hub, cfg config.Server, log *slog.Logger) (*GUI, error) {
 	t, err := loadTemplates()
 	if err != nil {
 		return nil, err
 	}
-	return &GUI{Store: store, Registry: reg, Hub: hub, Cfg: cfg, Log: log, Limiter: server.NewRateLimiter(), tpl: t}, nil
+	return &GUI{Store: store, Registry: reg, Hub: hub, Cfg: cfg, Log: log, Limiter: server.NewRateLimiter(ctx), tpl: t}, nil
 }
 
 func (g *GUI) Router() http.Handler {
