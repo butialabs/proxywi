@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/butialabs/proxywi/internal/storage"
+	"github.com/butialabs/proxywi/internal/telemetry"
 	"github.com/butialabs/proxywi/internal/tunnel"
 	"github.com/coder/websocket"
 	"github.com/hashicorp/yamux"
@@ -163,6 +164,7 @@ func (c *Control) readMetaStream(ctx context.Context, agent *Agent) {
 	defer pingTicker.Stop()
 
 	go func() {
+		defer telemetry.RecoverAndLog(c.Log, "control keepalive worker")
 		for {
 			select {
 			case <-ctx.Done():

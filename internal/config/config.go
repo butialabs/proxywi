@@ -26,6 +26,8 @@ type Server struct {
 	DoHProviders    []string
 	Timezone        string
 	LogLevel        slog.Level
+	SentryDSN       string
+	SentryEnv       string
 }
 
 type Client struct {
@@ -145,6 +147,8 @@ func LoadServer() (Server, error) {
 		DoHProviders:    splitEnv(l.str("PROXYWI_DOH_PROVIDERS", defaultDoHProviders)),
 		Timezone:        l.str("TZ", "UTC"),
 		LogLevel:        l.logLevel("PROXYWI_LOG_LEVEL", slog.LevelInfo),
+		SentryDSN:       os.Getenv("SENTRY_DSN"),
+		SentryEnv:       l.str("SENTRY_ENVIRONMENT", "production"),
 	}
 	return s, l.err()
 }

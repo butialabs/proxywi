@@ -19,6 +19,7 @@ import (
 	"github.com/butialabs/proxywi/internal/server"
 	"github.com/butialabs/proxywi/internal/server/gui"
 	"github.com/butialabs/proxywi/internal/storage"
+	"github.com/butialabs/proxywi/internal/telemetry"
 	"github.com/butialabs/proxywi/internal/tunnel"
 	"github.com/butialabs/proxywi/internal/version"
 	"github.com/pires/go-proxyproto"
@@ -40,6 +41,13 @@ func realMain() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	defer func() {
+		if r := recover(); r != nil {
+			telemetry.Recover(r)
+			panic(r)
+		}
+	}()
+
 	if err := run(ctx); err != nil {
 		slog.Error("server exited", "err", err)
 		return 1
@@ -55,7 +63,14 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+
+	flushSentry, err := telemetry.Init(cfg.SentryDSN, cfg.SentryEnv, version.Version)
+	if err != nil {
+		return fmt.Errorf("init sentry: %w", err)
+	}
+	defer flushSentry()
+
+	log := slog.New(telemetry.WrapSlog(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel})))
 	slog.SetDefault(log)
 
 	if len(cfg.DoHProviders) > 0 {
@@ -247,6 +262,7 @@ func serveListener(srv *http.Server, ln net.Listener, log *slog.Logger, role str
 }
 
 func runBlocklistRefresh(ctx context.Context, cfg config.Server, store *storage.Store, bl *server.Blocklist, log *slog.Logger) {
+	defer telemetry.RecoverAndLog(log, "blocklist refresh worker")
 	if len(cfg.BlockCategories) == 0 {
 		return
 	}
@@ -306,6 +322,7 @@ func runBlocklistRefresh(ctx context.Context, cfg config.Server, store *storage.
 }
 
 func runRetentionSweep(ctx context.Context, store *storage.Store, log *slog.Logger) {
+	defer telemetry.RecoverAndLog(log, "retention sweep worker")
 	longSweep := func() {
 		cutoff := time.Now().Add(-retentionWindow)
 		n, err := store.PurgeOldData(ctx, cutoff)

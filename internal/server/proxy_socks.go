@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/butialabs/proxywi/internal/storage"
+	"github.com/butialabs/proxywi/internal/telemetry"
 	"github.com/butialabs/proxywi/internal/tunnel"
 )
 
@@ -61,6 +62,7 @@ func (s *SOCKSProxy) Serve(ctx context.Context, ln net.Listener) error {
 		sem <- struct{}{}
 		go func(c net.Conn) {
 			defer func() { <-sem }()
+			defer telemetry.RecoverAndLog(s.Log, "socks connection handler")
 			s.handle(ctx, c)
 		}(conn)
 	}

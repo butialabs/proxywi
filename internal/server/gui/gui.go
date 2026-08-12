@@ -12,6 +12,7 @@ import (
 	"github.com/butialabs/proxywi/internal/config"
 	"github.com/butialabs/proxywi/internal/server"
 	"github.com/butialabs/proxywi/internal/storage"
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -36,8 +37,11 @@ func New(ctx context.Context, store *storage.Store, reg *server.Registry, hub *s
 }
 
 func (g *GUI) Router() http.Handler {
+	sentryMW := sentryhttp.New(sentryhttp.Options{Repanic: true})
+
 	r := chi.NewRouter()
 	r.Use(chimw.Recoverer)
+	r.Use(sentryMW.Handle)
 	r.Use(noIndexHeader)
 	r.Use(securityHeaders)
 
