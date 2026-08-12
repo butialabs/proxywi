@@ -8,6 +8,7 @@ COPY internal/dns         ./internal/dns
 COPY internal/i18n        ./internal/i18n
 COPY internal/server      ./internal/server
 COPY internal/storage     ./internal/storage
+COPY internal/telemetry   ./internal/telemetry
 COPY internal/tunnel      ./internal/tunnel
 COPY internal/version     ./internal/version
 ARG BUILD_VERSION=dev
