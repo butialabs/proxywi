@@ -325,14 +325,14 @@ jobs:
       - name: 🤖 Generate release notes
         id: ai_notes
         run: |
-          RESPONSE=$(curl -s https://models.inference.ai.azure.com/chat/completions \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          RESPONSE=$(curl -s https://openrouter.ai/api/v1/chat/completions \
+            -H "Authorization: Bearer ${{ secrets.OPENROUTER_API_KEY }}" \
             -H "Content-Type: application/json" \
             -d "$(jq -n \
               --arg version "${{ needs.setup.outputs.version }}" \
               --arg log "${{ steps.commits.outputs.LOG }}" \
               '{
-                model: "gpt-4o-mini",
+                model: "openrouter/free",
                 messages: [
                   {
                     role: "system",
@@ -346,11 +346,9 @@ jobs:
               }')"
           )
           NOTES=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "Release notes unavailable."')
-          {
-            echo "NOTES<<EOF"
-            echo "$NOTES"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          echo "NOTES<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: 📝 Create release
         uses: softprops/action-gh-release@v2
