@@ -94,7 +94,8 @@ module.exports = function (grunt) {
     const fs = require('fs');
     const icons = [
       'arrow-down-circle', 'arrow-path', 'arrow-right-on-rectangle', 'arrow-up-circle',
-      'bars-3', 'bolt', 'chart-bar', 'check-circle', 'chevron-left', 'chevron-right',
+      'bars-3', 'bolt', 'chart-bar', 'check-circle', 'chevron-down', 'chevron-left', 'chevron-right',
+      'chevron-up', 'chevron-up-down',
       'code-bracket', 'document-text', 'exclamation-triangle', 'funnel',
       'inbox', 'information-circle', 'key', 'link', 'lock-closed',
       'no-symbol', 'pencil', 'plus', 'plus-circle', 'server',

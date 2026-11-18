@@ -15,7 +15,7 @@ ARG BUILD_VERSION=dev
 ENV CGO_ENABLED=0
 RUN go build -trimpath -ldflags="-s -w -X github.com/butialabs/proxywi/internal/version.Version=${BUILD_VERSION}" -o /out/proxywi-server ./cmd/proxywi-server
 
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates && mkdir -p /data /config
 
 COPY --from=build /out/proxywi-server /usr/bin/proxywi-server
