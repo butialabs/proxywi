@@ -191,8 +191,9 @@ func run(ctx context.Context) error {
 	}
 	if cfg.ProxyProtocol {
 		log.Info("PROXY protocol enabled on proxy listeners", "http", cfg.HTTPAddr, "socks", cfg.SOCKSAddr)
-		httpLn = &proxyproto.Listener{Listener: httpLn}
-		socksLn = &proxyproto.Listener{Listener: socksLn}
+		usePolicy := func(proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) { return proxyproto.USE, nil }
+		httpLn = &proxyproto.Listener{Listener: httpLn, ConnPolicy: usePolicy}
+		socksLn = &proxyproto.Listener{Listener: socksLn, ConnPolicy: usePolicy}
 	}
 
 	var wg sync.WaitGroup
