@@ -16,6 +16,6 @@
     var el = document.getElementById('client-ping-' + d.id);
     if (!el) return;
     var cls = d.ping_ms > 2000 ? 'text-amber' : 'text-accent';
-    el.innerHTML = '<span class="' + cls + '">' + d.ping_ms + ' ms</span>';
+    el.innerHTML = '<span class="' + cls + '">' + (Number(d.ping_ms) || 0) + ' ms</span>';
   });
 })();

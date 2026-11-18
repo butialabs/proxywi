@@ -8,6 +8,7 @@
     <strong>{{t "logs.live"}}</strong>
     <span class="ml-2 text-dim text-sm">{{tp "logs.total_count" .}}</span>
     <form class="flex items-center gap-2 ml-auto flex-wrap" method="get" action="/logs">
+      {{if not .Q.IsDefault}}<input type="hidden" name="sort" value="{{.Q.Sort}}"><input type="hidden" name="dir" value="{{.Q.Dir}}">{{end}}
       <select name="user_id" class="bg-soft border border-border-hi px-2 py-1.5 text-fg focus:outline-none focus:ring-2 focus:ring-accent/40 w-auto">
         <option value="0" {{if eq .FilterUserID 0}}selected{{end}}>{{t "logs.filter_all_users"}}</option>
         {{range .UserOptions}}
@@ -29,16 +30,16 @@
     <table class="w-full text-sm">
       <thead class="bg-soft">
         <tr class="text-dim text-xs uppercase">
-          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_time"}}</th>
-          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_outcome"}}</th>
-          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_proto"}}</th>
-          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_user"}}</th>
-          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_client"}}</th>
-          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_target"}}</th>
-          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_in"}}</th>
-          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_out"}}</th>
-          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_connect"}}</th>
-          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "logs.col_duration"}}</th>
+          {{template "sortth" (dict "q" .Q "key" "time" "label" (t "logs.col_time"))}}
+          {{template "sortth" (dict "q" .Q "key" "outcome" "label" (t "logs.col_outcome"))}}
+          {{template "sortth" (dict "q" .Q "key" "protocol" "label" (t "logs.col_proto"))}}
+          {{template "sortth" (dict "q" .Q "key" "user" "label" (t "logs.col_user"))}}
+          {{template "sortth" (dict "q" .Q "key" "client" "label" (t "logs.col_client"))}}
+          {{template "sortth" (dict "q" .Q "key" "target" "label" (t "logs.col_target"))}}
+          {{template "sortth" (dict "q" .Q "key" "in" "label" (t "logs.col_in") "right" true)}}
+          {{template "sortth" (dict "q" .Q "key" "out" "label" (t "logs.col_out") "right" true)}}
+          {{template "sortth" (dict "q" .Q "key" "connect" "label" (t "logs.col_connect") "right" true)}}
+          {{template "sortth" (dict "q" .Q "key" "duration" "label" (t "logs.col_duration") "right" true)}}
         </tr>
       </thead>
       <tbody id="logs-tbody">
@@ -71,12 +72,12 @@
     <nav>
       <ul class="flex gap-1">
         <li class="{{if not .HasPrev}}opacity-40 pointer-events-none{{end}}">
-          <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasPrev}}href="?page={{.PrevPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+          <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasPrev}}href="{{.PrevHref}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
             <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#chevron-left"></use></svg> {{t "logs.page_prev"}}
           </a>
         </li>
         <li class="{{if not .HasNext}}opacity-40 pointer-events-none{{end}}">
-          <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasNext}}href="?page={{.NextPage}}{{.FilterQS}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+          <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasNext}}href="{{.NextHref}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
             {{t "logs.page_next"}} <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#chevron-right"></use></svg>
           </a>
         </li>

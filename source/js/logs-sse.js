@@ -29,10 +29,10 @@
     tr.innerHTML =
       '<td class="px-3 py-2 text-dim text-xs font-mono">' + ts + '</td>' +
       '<td class="px-3 py-2 text-center">' + outcomeIcon + '</td>' +
-      '<td class="px-3 py-2"><span class="inline-flex items-center gap-1 text-dim">' + (d.protocol || '') + '</span></td>' +
-      '<td class="px-3 py-2">' + (d.user || '') + '</td>' +
-      '<td class="px-3 py-2">' + (d.client_name || '') + '</td>' +
-      '<td class="px-3 py-2 truncate max-w-[320px]">' + (d.target ? '<code class="font-mono text-accent-hi">' + d.target + '</code>' : '') + '</td>' +
+      '<td class="px-3 py-2"><span class="inline-flex items-center gap-1 text-dim">' + esc(d.protocol) + '</span></td>' +
+      '<td class="px-3 py-2">' + esc(d.user) + '</td>' +
+      '<td class="px-3 py-2">' + esc(d.client_name) + '</td>' +
+      '<td class="px-3 py-2 truncate max-w-[320px]">' + (d.target ? '<code class="font-mono text-accent-hi">' + esc(d.target) + '</code>' : '') + '</td>' +
       '<td class="px-3 py-2 text-right font-mono">' + fmtBytes(d.bytes_in) + '</td>' +
       '<td class="px-3 py-2 text-right font-mono">' + fmtBytes(d.bytes_out) + '</td>' +
       '<td class="px-3 py-2 text-right font-mono text-dim">' + connectCell + '</td>' +
@@ -40,6 +40,11 @@
     tbody.prepend(tr);
     while (tbody.children.length > MAX_ROWS) tbody.lastElementChild.remove();
   });
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
   function fmtBytes(b) {
     if (!b) return '0 B';
     var k = 1024, sizes = ['B', 'KB', 'MB', 'GB'];

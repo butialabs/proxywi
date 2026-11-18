@@ -81,11 +81,12 @@ func pageData() map[string]any {
 		"Page":       1,
 		"TotalPages": 1,
 		"Total":      0,
-		"PrevPage":   0,
-		"NextPage":   2,
 		"HasPrev":    false,
 		"HasNext":    false,
 		"Period":     "week",
+		"PrevHref":   "?",
+		"NextHref":   "?page=2",
+		"Q":          parseListQuery(nil, []string{"id"}, "id", "asc"),
 	}
 }
 

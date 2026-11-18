@@ -2,13 +2,13 @@ package gui
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"html/template"
 	"net/http"
-	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -226,6 +226,51 @@ type clientView struct {
 	LastSeenHuman string
 	PingMS        *int64
 	PingStatus    string // "ok" | "degraded" | "unknown"
+
+	lastSeen time.Time
+}
+
+var clientSortKeys = []string{"id", "name", "version", "status", "last_seen", "ping"}
+
+func sortClientViews(views []clientView, lq listQuery) {
+	desc := lq.Desc()
+	slices.SortStableFunc(views, func(a, b clientView) int {
+		var c int
+		switch lq.Sort {
+		case "name":
+			c = cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+		case "version":
+			c = cmp.Compare(a.AgentVersion, b.AgentVersion)
+		case "status":
+			c = cmp.Compare(boolInt(a.Online), boolInt(b.Online))
+		case "last_seen":
+			c = a.lastSeen.Compare(b.lastSeen)
+		case "ping":
+			switch {
+			case a.PingMS == nil && b.PingMS == nil:
+			case a.PingMS == nil:
+				return 1
+			case b.PingMS == nil:
+				return -1
+			default:
+				c = cmp.Compare(*a.PingMS, *b.PingMS)
+			}
+		}
+		if c == 0 {
+			c = cmp.Compare(a.ID, b.ID)
+		}
+		if desc {
+			c = -c
+		}
+		return c
+	})
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 const composeTokenPlaceholder = "<paste-your-token-here>"
@@ -256,13 +301,18 @@ func (g *GUI) getClients(w http.ResponseWriter, r *http.Request) {
 			LastSeenHuman: humanSince(c.LastSeen),
 			PingMS:        c.PingMS,
 			PingStatus:    pingStatus,
+			lastSeen:      c.LastSeen,
 		})
 	}
+	lq := parseListQuery(r.URL.Query(), clientSortKeys, "id", "desc").
+		withDescFirst("id", "status", "last_seen")
+	sortClientViews(views, lq)
 	data := map[string]any{
 		"Title":   "Clients",
 		"Active":  "clients",
 		"User":    g.adminName(ctx),
 		"Clients": views,
+		"Q":       lq,
 		"ClientsData": map[string]string{
 			"confirmTpl": v.tr("clients.confirm_regenerate"),
 		},
@@ -387,6 +437,31 @@ type accessView struct {
 	Username      string
 	LastUsedHuman string
 	UsedCount     int
+
+	lastUsed time.Time
+}
+
+var accessSortKeys = []string{"id", "user", "last_used", "used"}
+
+func sortAccessViews(views []accessView, lq listQuery) {
+	slices.SortStableFunc(views, func(a, b accessView) int {
+		var c int
+		switch lq.Sort {
+		case "user":
+			c = cmp.Compare(strings.ToLower(a.Username), strings.ToLower(b.Username))
+		case "last_used":
+			c = a.lastUsed.Compare(b.lastUsed)
+		case "used":
+			c = cmp.Compare(a.UsedCount, b.UsedCount)
+		}
+		if c == 0 {
+			c = cmp.Compare(a.ID, b.ID)
+		}
+		if lq.Desc() {
+			c = -c
+		}
+		return c
+	})
 }
 
 func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
@@ -412,8 +487,11 @@ func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 			Username:      u.Username,
 			LastUsedHuman: lastUsed,
 			UsedCount:     uu.Count,
+			lastUsed:      uu.LastUsed,
 		})
 	}
+	lq := parseListQuery(r.URL.Query(), accessSortKeys, "id", "asc").withDescFirst("last_used", "used")
+	sortAccessViews(views, lq)
 
 	proxyHost := g.Cfg.MainDomain
 
@@ -423,6 +501,7 @@ func (g *GUI) getAccess(w http.ResponseWriter, r *http.Request) {
 		"User":      g.adminName(ctx),
 		"Accesses":  views,
 		"ProxyHost": proxyHost,
+		"Q":         lq,
 	})
 }
 
@@ -536,66 +615,17 @@ func outcomeTitle(outcome, reason string) string {
 }
 
 const logsPageSize = 20
-const statsPageSize = 20
 
 func (g *GUI) getGlobalStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	q := r.URL.Query()
-	period := q.Get("period")
-	var since time.Time
-	switch period {
-	case "month":
-		since = time.Now().Add(-30 * 24 * time.Hour)
-	default:
-		period = "week"
-		since = time.Now().Add(-7 * 24 * time.Hour)
-	}
-
-	domainStats, err := g.Store.DomainStats(ctx, 0, since)
+	data, err := g.domainStatsPage(ctx, r.URL.Query(), 0)
 	if g.dbError(w, "domain stats", err) {
 		return
 	}
-	views := make([]domainStatView, 0, len(domainStats))
-	for _, s := range domainStats {
-		views = append(views, domainStatView{
-			Domain:        s.Domain,
-			Requests:      s.Requests,
-			BytesInH:      humanBytes(s.BytesIn),
-			BytesOutH:     humanBytes(s.BytesOut),
-			AvgDurationMS: s.AvgDurationMS,
-			AvgConnectMS:  s.AvgConnectMS,
-		})
-	}
-
-	total := len(views)
-	page, _ := strconv.Atoi(q.Get("page"))
-	if page < 1 {
-		page = 1
-	}
-	totalPages := (total + statsPageSize - 1) / statsPageSize
-	if totalPages == 0 {
-		totalPages = 1
-	}
-	if page > totalPages {
-		page = totalPages
-	}
-	start := (page - 1) * statsPageSize
-	end := min(start+statsPageSize, total)
-
-	g.render(w, r, "stats.html", map[string]any{
-		"Title":      "Stats",
-		"Active":     "stats",
-		"User":       g.adminName(ctx),
-		"Stats":      views[start:end],
-		"Period":     period,
-		"Page":       page,
-		"TotalPages": totalPages,
-		"PrevPage":   page - 1,
-		"NextPage":   page + 1,
-		"HasPrev":    page > 1,
-		"HasNext":    page < totalPages,
-		"FilterQS":   template.HTML("&period=" + period),
-	})
+	data["Title"] = "Stats"
+	data["Active"] = "stats"
+	data["User"] = g.adminName(ctx)
+	g.render(w, r, "stats.html", data)
 }
 
 func (g *GUI) postResetStats(w http.ResponseWriter, r *http.Request) {
@@ -614,28 +644,22 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 	filterUserID, _ := strconv.ParseInt(q.Get("user_id"), 10, 64)
 	filterClientID, _ := strconv.ParseInt(q.Get("client_id"), 10, 64)
 	search := strings.TrimSpace(q.Get("q"))
+	lq := parseListQuery(q, storage.ProxyEventSortKeys, "time", "desc", "user_id", "client_id", "q").
+		withDescFirst("time", "in", "out", "connect", "duration")
 	filter := storage.ProxyEventFilter{
 		Since:    since,
 		UserID:   filterUserID,
 		ClientID: filterClientID,
 		Search:   search,
+		Sort:     lq.Sort,
+		Desc:     lq.Desc(),
 	}
-
-	page, _ := strconv.Atoi(q.Get("page"))
-	if page < 1 {
-		page = 1
-	}
-	offset := (page - 1) * logsPageSize
 
 	total, err := g.Store.CountProxyEventsFiltered(ctx, filter)
 	if g.dbError(w, "count proxy events", err) {
 		return
 	}
-	totalPages := max((total+logsPageSize-1)/logsPageSize, 1)
-	if page > totalPages {
-		page = totalPages
-		offset = (page - 1) * logsPageSize
-	}
+	offset, data := lq.paginate(total, logsPageSize)
 
 	events, err := g.Store.ListProxyEventsFiltered(ctx, filter, logsPageSize, offset)
 	if g.dbError(w, "list proxy events", err) {
@@ -675,43 +699,20 @@ func (g *GUI) getLogs(w http.ResponseWriter, r *http.Request) {
 		userOpts = append(userOpts, clientOption{ID: u.ID, Name: u.Username})
 	}
 
-	// Query string carrying the active filters, appended to pagination links.
-	filterVals := url.Values{}
-	if filterUserID > 0 {
-		filterVals.Set("user_id", strconv.FormatInt(filterUserID, 10))
-	}
-	if filterClientID > 0 {
-		filterVals.Set("client_id", strconv.FormatInt(filterClientID, 10))
-	}
-	if search != "" {
-		filterVals.Set("q", search)
-	}
-	filterQS := ""
-	if enc := filterVals.Encode(); enc != "" {
-		filterQS = "&" + enc
-	}
 	hasFilter := filterUserID > 0 || filterClientID > 0 || search != ""
 
-	g.render(w, r, "logs.html", map[string]any{
-		"Title":          "Logs",
-		"Active":         "logs",
-		"User":           g.adminName(ctx),
-		"Events":         views,
-		"Page":           page,
-		"TotalPages":     totalPages,
-		"Total":          total,
-		"PrevPage":       page - 1,
-		"NextPage":       page + 1,
-		"HasPrev":        page > 1,
-		"HasNext":        page < totalPages,
-		"ClientOptions":  clientOpts,
-		"UserOptions":    userOpts,
-		"FilterUserID":   filterUserID,
-		"FilterClientID": filterClientID,
-		"FilterSearch":   search,
-		"FilterQS":       template.HTML(filterQS),
-		"HasFilter":      hasFilter,
-	})
+	data["Title"] = "Logs"
+	data["Active"] = "logs"
+	data["User"] = g.adminName(ctx)
+	data["Events"] = views
+	data["ClientOptions"] = clientOpts
+	data["UserOptions"] = userOpts
+	data["FilterUserID"] = filterUserID
+	data["FilterClientID"] = filterClientID
+	data["FilterSearch"] = search
+	data["HasFilter"] = hasFilter
+	data["Q"] = lq
+	g.render(w, r, "logs.html", data)
 }
 
 func (g *GUI) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {

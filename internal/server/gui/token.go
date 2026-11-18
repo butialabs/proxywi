@@ -3,6 +3,7 @@ package gui
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/butialabs/proxywi/internal/storage"
@@ -131,7 +132,21 @@ func (g *GUI) getTokenStats(w http.ResponseWriter, r *http.Request) {
 		clientName = client.Name
 	}
 
-	period := r.URL.Query().Get("period")
+	data, err := g.domainStatsPage(ctx, r.URL.Query(), clientID)
+	if g.dbError(w, "domain stats", err) {
+		return
+	}
+	data["Title"] = "Stats"
+	data["TokenUser"] = clientName
+	data["ClientName"] = clientName
+	data["Active"] = "token_stats"
+	g.render(w, r, "token_stats.html", data)
+}
+
+const statsPageSize = 20
+
+func (g *GUI) domainStatsPage(ctx context.Context, q url.Values, clientID int64) (map[string]any, error) {
+	period := q.Get("period")
 	var since time.Time
 	switch period {
 	case "month":
@@ -140,10 +155,19 @@ func (g *GUI) getTokenStats(w http.ResponseWriter, r *http.Request) {
 		period = "week"
 		since = time.Now().Add(-7 * 24 * time.Hour)
 	}
+	lq := parseListQuery(q, storage.DomainStatSortKeys, "requests", "desc", "period").
+		withDescFirst("requests", "in", "out", "connect", "duration")
 
-	domainStats, err := g.Store.DomainStats(ctx, clientID, since)
-	if g.dbError(w, "domain stats", err) {
-		return
+	sq := storage.DomainStatsQuery{ClientID: clientID, Since: since, Sort: lq.Sort, Desc: lq.Desc()}
+	total, err := g.Store.CountDomainStats(ctx, sq)
+	if err != nil {
+		return nil, err
+	}
+	offset, data := lq.paginate(total, statsPageSize)
+	sq.Limit, sq.Offset = statsPageSize, offset
+	domainStats, err := g.Store.DomainStats(ctx, sq)
+	if err != nil {
+		return nil, err
 	}
 	views := make([]domainStatView, 0, len(domainStats))
 	for _, s := range domainStats {
@@ -156,12 +180,8 @@ func (g *GUI) getTokenStats(w http.ResponseWriter, r *http.Request) {
 			AvgConnectMS:  s.AvgConnectMS,
 		})
 	}
-	g.render(w, r, "token_stats.html", map[string]any{
-		"Title":      "Stats",
-		"TokenUser":  clientName,
-		"ClientName": clientName,
-		"Active":     "token_stats",
-		"Stats":      views,
-		"Period":     period,
-	})
+	data["Stats"] = views
+	data["Period"] = period
+	data["Q"] = lq
+	return data, nil
 }

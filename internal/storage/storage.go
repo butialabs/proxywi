@@ -775,6 +775,7 @@ func (s *Store) PurgeOldData(ctx context.Context, cutoff time.Time) (int64, erro
 		arg int64
 	}{
 		{`DELETE FROM metric_samples WHERE bucket_ts < ?`, ts},
+		{`DELETE FROM domain_stats_daily WHERE day < ?`, dayStart(cutoff)},
 		{`DELETE FROM auth_failures  WHERE ts        < ?`, ts},
 		{`DELETE FROM admin_sessions WHERE expires_at   < ?`, now},
 		{`DELETE FROM token_sessions WHERE expires_at   < ?`, now},
@@ -841,21 +842,64 @@ func (s *Store) InsertProxyEvent(ctx context.Context, ev ProxyEvent) (int64, err
 	if ts.IsZero() {
 		ts = time.Now()
 	}
-	res, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO proxy_events (ts, user_id, client_id, target_host, protocol, outcome, outcome_reason, bytes_in, bytes_out, duration_ms, connect_ms)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ts.Unix(), userPtr, clientPtr, ev.TargetHost, ev.Protocol, ev.Outcome, ev.OutcomeReason, ev.BytesIn, ev.BytesOut, ev.DurationMS, ev.ConnectMS)
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if ev.Outcome == "ok" {
+		var connectHit int64
+		if ev.ConnectMS > 0 {
+			connectHit = 1
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO domain_stats_daily (day, client_id, domain, requests, bytes_in, bytes_out, sum_duration_ms, sum_connect_ms, connect_count)
+             VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)
+             ON CONFLICT(day, client_id, domain) DO UPDATE SET
+                requests        = requests + 1,
+                bytes_in        = bytes_in + excluded.bytes_in,
+                bytes_out       = bytes_out + excluded.bytes_out,
+                sum_duration_ms = sum_duration_ms + excluded.sum_duration_ms,
+                sum_connect_ms  = sum_connect_ms + excluded.sum_connect_ms,
+                connect_count   = connect_count + excluded.connect_count`,
+			dayStart(ts), ev.ClientID, domainOf(ev.TargetHost), ev.BytesIn, ev.BytesOut, ev.DurationMS, ev.ConnectMS, connectHit); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func dayStart(t time.Time) int64 {
+	u := t.Unix()
+	return u - u%86400
+}
+
+func domainOf(host string) string {
+	if i := strings.LastIndex(host, ":"); i > 0 {
+		return host[:i]
+	}
+	return host
 }
 
 func (s *Store) ListProxyEvents(ctx context.Context, since time.Time, limit int) ([]ProxyEvent, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	return s.ListProxyEventsFiltered(ctx, ProxyEventFilter{Since: since}, limit, 0)
+	return s.ListProxyEventsFiltered(ctx, ProxyEventFilter{Since: since, Sort: "time", Desc: true}, limit, 0)
 }
 
 type ProxyEventFilter struct {
@@ -863,6 +907,36 @@ type ProxyEventFilter struct {
 	UserID   int64
 	ClientID int64
 	Search   string
+	Sort string
+	Desc bool
+}
+
+var proxyEventSortColumns = map[string]string{
+	"time":     "e.ts",
+	"outcome":  "e.outcome",
+	"protocol": "e.protocol",
+	"user":     "COALESCE(u.username,'')",
+	"client":   "COALESCE(c.name,'')",
+	"target":   "e.target_host",
+	"in":       "e.bytes_in",
+	"out":      "e.bytes_out",
+	"connect":  "e.connect_ms",
+	"duration": "e.duration_ms",
+}
+
+// ProxyEventSortKeys lists the sort keys accepted by ListProxyEventsFiltered.
+var ProxyEventSortKeys = []string{"time", "outcome", "protocol", "user", "client", "target", "in", "out", "connect", "duration"}
+
+func (f ProxyEventFilter) orderBy() string {
+	col, ok := proxyEventSortColumns[f.Sort]
+	if !ok {
+		col = "e.ts"
+	}
+	dir := "ASC"
+	if f.Desc {
+		dir = "DESC"
+	}
+	return col + " " + dir + ", e.id " + dir
 }
 
 func (f ProxyEventFilter) where() (string, []any) {
@@ -910,7 +984,7 @@ func (s *Store) ListProxyEventsFiltered(ctx context.Context, f ProxyEventFilter,
          LEFT JOIN users   u ON u.id = e.user_id
          LEFT JOIN clients c ON c.id = e.client_id
          WHERE `+where+`
-         ORDER BY e.ts DESC, e.id DESC
+         ORDER BY `+f.orderBy()+`
          LIMIT ? OFFSET ?`,
 		args...)
 	if err != nil {
@@ -947,6 +1021,9 @@ func (s *Store) PurgeAllProxyEvents(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM domain_stats_daily`); err != nil {
+		return n, err
+	}
 	return n, nil
 }
 
@@ -959,84 +1036,84 @@ type DomainStat struct {
 	AvgConnectMS  int64
 }
 
-func (s *Store) DomainStats(ctx context.Context, clientID int64, since time.Time) ([]DomainStat, error) {
-	var rows *sql.Rows
-	var err error
-	if clientID == 0 {
-		rows, err = s.db.QueryContext(ctx,
-			`SELECT target_host, COUNT(*) AS cnt, SUM(bytes_in), SUM(bytes_out), CAST(AVG(duration_ms) AS INTEGER), CAST(COALESCE(AVG(NULLIF(connect_ms,0)),0) AS INTEGER)
-			 FROM proxy_events
-			 WHERE ts >= ? AND outcome = 'ok'
-			 GROUP BY target_host
-			 ORDER BY cnt DESC
-			 LIMIT 200`,
-			since.Unix())
-	} else {
-		rows, err = s.db.QueryContext(ctx,
-			`SELECT target_host, COUNT(*) AS cnt, SUM(bytes_in), SUM(bytes_out), CAST(AVG(duration_ms) AS INTEGER), CAST(COALESCE(AVG(NULLIF(connect_ms,0)),0) AS INTEGER)
-			 FROM proxy_events
-			 WHERE client_id = ? AND ts >= ? AND outcome = 'ok'
-			 GROUP BY target_host
-			 ORDER BY cnt DESC
-			 LIMIT 200`,
-			clientID, since.Unix())
+var DomainStatSortKeys = []string{"domain", "requests", "in", "out", "connect", "duration"}
+
+var domainStatSortColumns = map[string]string{
+	"domain":   "domain",
+	"requests": "requests",
+	"in":       "bytes_in",
+	"out":      "bytes_out",
+	"connect":  "avg_connect",
+	"duration": "avg_duration",
+}
+
+type DomainStatsQuery struct {
+	ClientID int64
+	Since    time.Time
+	Sort     string // one of DomainStatSortKeys; defaults to "requests"
+	Desc     bool
+	Limit    int
+	Offset   int
+}
+
+func (q DomainStatsQuery) where() (string, []any) {
+	if q.ClientID != 0 {
+		return `client_id = ? AND day >= ?`, []any{q.ClientID, dayStart(q.Since)}
 	}
+	return `day >= ?`, []any{dayStart(q.Since)}
+}
+
+func (s *Store) CountDomainStats(ctx context.Context, q DomainStatsQuery) (int, error) {
+	where, args := q.where()
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT domain) FROM domain_stats_daily WHERE `+where, args...).Scan(&n)
+	return n, err
+}
+
+func (s *Store) DomainStats(ctx context.Context, q DomainStatsQuery) ([]DomainStat, error) {
+	col, ok := domainStatSortColumns[q.Sort]
+	if !ok {
+		col = "requests"
+	}
+	dir := "ASC"
+	if q.Desc {
+		dir = "DESC"
+	}
+	if q.Limit <= 0 || q.Limit > 1000 {
+		q.Limit = 20
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	where, args := q.where()
+	args = append(args, q.Limit, q.Offset)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT domain,
+                SUM(requests)  AS requests,
+                SUM(bytes_in)  AS bytes_in,
+                SUM(bytes_out) AS bytes_out,
+                CAST(COALESCE(SUM(sum_duration_ms) / NULLIF(SUM(requests), 0), 0) AS INTEGER)     AS avg_duration,
+                CAST(COALESCE(SUM(sum_connect_ms)  / NULLIF(SUM(connect_count), 0), 0) AS INTEGER) AS avg_connect
+         FROM domain_stats_daily
+         WHERE `+where+`
+         GROUP BY domain
+         ORDER BY `+col+` `+dir+`, domain ASC
+         LIMIT ? OFFSET ?`,
+		args...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-
-	type entry struct {
-		requests      int64
-		bytesIn       int64
-		bytesOut      int64
-		totalDuration int64
-		totalConnect  int64
-	}
-	byDomain := map[string]*entry{}
-	var order []string
+	var out []DomainStat
 	for rows.Next() {
-		var host string
-		var cnt, bIn, bOut, avgDur, avgConnect int64
-		if err := rows.Scan(&host, &cnt, &bIn, &bOut, &avgDur, &avgConnect); err != nil {
+		var d DomainStat
+		if err := rows.Scan(&d.Domain, &d.Requests, &d.BytesIn, &d.BytesOut, &d.AvgDurationMS, &d.AvgConnectMS); err != nil {
 			return nil, err
 		}
-		domain := host
-		if i := strings.LastIndex(host, ":"); i > 0 {
-			domain = host[:i]
-		}
-		if _, ok := byDomain[domain]; !ok {
-			byDomain[domain] = &entry{}
-			order = append(order, domain)
-		}
-		e := byDomain[domain]
-		e.totalDuration += avgDur * cnt
-		e.totalConnect += avgConnect * cnt
-		e.requests += cnt
-		e.bytesIn += bIn
-		e.bytesOut += bOut
+		out = append(out, d)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	out := make([]DomainStat, 0, len(order))
-	for _, domain := range order {
-		e := byDomain[domain]
-		avg, avgConn := int64(0), int64(0)
-		if e.requests > 0 {
-			avg = e.totalDuration / e.requests
-			avgConn = e.totalConnect / e.requests
-		}
-		out = append(out, DomainStat{
-			Domain:        domain,
-			Requests:      e.requests,
-			BytesIn:       e.bytesIn,
-			BytesOut:      e.bytesOut,
-			AvgDurationMS: avg,
-			AvgConnectMS:  avgConn,
-		})
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (s *Store) UpsertBlockedDomains(ctx context.Context, domains []string, category string) error {

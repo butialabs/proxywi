@@ -4,8 +4,8 @@
 </div>
 
 <div class="flex gap-2 mb-4">
-  <a href="/t/stats?period=week" class="px-3 py-1 text-sm border border-border-hi {{if eq .Period "week"}}bg-accent text-bg{{else}}text-dim hover:text-fg hover:bg-white/5{{end}}">{{t "token_stats.period_week"}}</a>
-  <a href="/t/stats?period=month" class="px-3 py-1 text-sm border border-border-hi {{if eq .Period "month"}}bg-accent text-bg{{else}}text-dim hover:text-fg hover:bg-white/5{{end}}">{{t "token_stats.period_month"}}</a>
+  <a href="{{.Q.FilterHref "period" "week"}}" class="px-3 py-1 text-sm border border-border-hi {{if eq .Period "week"}}bg-accent text-bg{{else}}text-dim hover:text-fg hover:bg-white/5{{end}}">{{t "token_stats.period_week"}}</a>
+  <a href="{{.Q.FilterHref "period" "month"}}" class="px-3 py-1 text-sm border border-border-hi {{if eq .Period "month"}}bg-accent text-bg{{else}}text-dim hover:text-fg hover:bg-white/5{{end}}">{{t "token_stats.period_month"}}</a>
 </div>
 
 <div class="bg-panel border border-border">
@@ -13,12 +13,12 @@
     <table class="w-full text-sm">
       <thead class="bg-soft">
         <tr class="text-dim text-xs uppercase">
-          <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_domain"}}</th>
-          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_requests"}}</th>
-          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_in"}}</th>
-          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_out"}}</th>
-          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_avg_connect"}}</th>
-          <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "token_stats.col_avg_duration"}}</th>
+          {{template "sortth" (dict "q" .Q "key" "domain" "label" (t "token_stats.col_domain"))}}
+          {{template "sortth" (dict "q" .Q "key" "requests" "label" (t "token_stats.col_requests") "right" true)}}
+          {{template "sortth" (dict "q" .Q "key" "in" "label" (t "token_stats.col_in") "right" true)}}
+          {{template "sortth" (dict "q" .Q "key" "out" "label" (t "token_stats.col_out") "right" true)}}
+          {{template "sortth" (dict "q" .Q "key" "connect" "label" (t "token_stats.col_avg_connect") "right" true)}}
+          {{template "sortth" (dict "q" .Q "key" "duration" "label" (t "token_stats.col_avg_duration") "right" true)}}
         </tr>
       </thead>
       <tbody>
@@ -37,6 +37,25 @@
       </tbody>
     </table>
   </div>
+  {{if gt .TotalPages 1}}
+  <div class="bg-soft border-t border-border px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+    <span class="text-dim text-sm">{{tp "logs.page_status" .}}</span>
+    <nav>
+      <ul class="flex gap-1">
+        <li class="{{if not .HasPrev}}opacity-40 pointer-events-none{{end}}">
+          <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasPrev}}href="{{.PrevHref}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+            <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#chevron-left"></use></svg> {{t "logs.page_prev"}}
+          </a>
+        </li>
+        <li class="{{if not .HasNext}}opacity-40 pointer-events-none{{end}}">
+          <a class="inline-flex items-center px-2 py-1 text-sm border border-border-hi text-accent hover:bg-accent/10" {{if .HasNext}}href="{{.NextHref}}"{{else}}tabindex="-1" aria-disabled="true"{{end}}>
+            {{t "logs.page_next"}} <svg class="w-4 h-4" aria-hidden="true"><use href="/dist/img/icons.svg?v={{ver}}#chevron-right"></use></svg>
+          </a>
+        </li>
+      </ul>
+    </nav>
+  </div>
+  {{end}}
 </div>
 {{end}}
 {{template "layout" .}}

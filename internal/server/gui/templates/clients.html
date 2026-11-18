@@ -26,12 +26,12 @@
       <table class="w-full text-sm">
         <thead class="bg-soft">
           <tr class="text-dim text-xs uppercase">
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "clients.col_id"}}</th>
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "clients.col_name"}}</th>
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "clients.col_version"}}</th>
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "clients.col_status"}}</th>
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "clients.col_last_seen"}}</th>
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">Ping</th>
+            {{template "sortth" (dict "q" .Q "key" "id" "label" (t "clients.col_id"))}}
+            {{template "sortth" (dict "q" .Q "key" "name" "label" (t "clients.col_name"))}}
+            {{template "sortth" (dict "q" .Q "key" "version" "label" (t "clients.col_version"))}}
+            {{template "sortth" (dict "q" .Q "key" "status" "label" (t "clients.col_status"))}}
+            {{template "sortth" (dict "q" .Q "key" "last_seen" "label" (t "clients.col_last_seen"))}}
+            {{template "sortth" (dict "q" .Q "key" "ping" "label" "Ping")}}
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi"></th>
           </tr>
         </thead>

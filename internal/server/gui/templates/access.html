@@ -17,10 +17,10 @@
       <table class="w-full text-sm">
         <thead class="bg-soft">
           <tr class="text-dim text-xs uppercase">
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "access.col_id"}}</th>
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "access.col_user"}}</th>
-            <th class="text-left font-medium px-3 py-2 border-b border-border-hi">{{t "access.col_last_used"}}</th>
-            <th class="text-right font-medium px-3 py-2 border-b border-border-hi">{{t "access.col_used"}}</th>
+            {{template "sortth" (dict "q" .Q "key" "id" "label" (t "access.col_id"))}}
+            {{template "sortth" (dict "q" .Q "key" "user" "label" (t "access.col_user"))}}
+            {{template "sortth" (dict "q" .Q "key" "last_used" "label" (t "access.col_last_used"))}}
+            {{template "sortth" (dict "q" .Q "key" "used" "label" (t "access.col_used") "right" true)}}
             <th class="text-left font-medium px-3 py-2 border-b border-border-hi"></th>
           </tr>
         </thead>
