@@ -1,315 +1,285 @@
 name: Release
+run-name: Release ${{ inputs.tag || github.ref_name }}
 
-# v*-server  → publishes proxywi-server only
-# v*-client  → publishes proxywi-client only
 on:
   push:
     tags:
-      - "v*-server"
-      - "v*-client"
+      - '*.*.*'
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
-      component:
-        description: "Which image to build"
+      tag:
+        description: 'Existing tag to publish (e.g. 1.4.0)'
         required: true
-        default: "both"
+        type: string
+      component:
+        description: Component to publish
+        required: true
         type: choice
+        default: both
         options: [both, server, client]
+      architectures:
+        description: 'Image architectures: [amd64, arm64], [amd64] or [arm64]'
+        required: true
+        default: '[amd64, arm64]'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_OWNER: ${{ github.repository_owner }}
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: "1.26" }
-      - run: go vet ./...
-      - run: go test ./...
-
-  decide:
-    needs: test
-    runs-on: ubuntu-latest
-    outputs:
-      server_build: ${{ steps.out.outputs.server_build }}
-      client_build: ${{ steps.out.outputs.client_build }}
-    steps:
-      - name: Resolve build flags
-        id: out
-        env:
-          COMPONENT_INPUT: ${{ inputs.component }}
-        run: |
-          server=false; client=false
-          EVENT_NAME="${{ github.event_name }}"
-          REF_NAME="${{ github.ref_name }}"
-          case "$EVENT_NAME" in
-            workflow_dispatch)
-              [[ "$COMPONENT_INPUT" == "both" || "$COMPONENT_INPUT" == "server" ]] && server=true
-              [[ "$COMPONENT_INPUT" == "both" || "$COMPONENT_INPUT" == "client" ]] && client=true
-              ;;
-            push)
-              [[ "$REF_NAME" == *"-server" ]] && server=true
-              [[ "$REF_NAME" == *"-client" ]] && client=true
-              ;;
-          esac
-          echo "server_build=$server" >> "$GITHUB_OUTPUT"
-          echo "client_build=$client" >> "$GITHUB_OUTPUT"
-          echo "server=$server client=$client"
+  ci:
+    name: CI
+    needs: setup
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.setup.outputs.commit }}
 
   setup:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref_type == 'tag'
-    outputs:
-      version: ${{ steps.vars.outputs.version }}
-      prerelease: ${{ steps.vars.outputs.prerelease }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Resolve version
-        id: vars
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          if [[ "$VERSION" =~ -(alpha|beta|rc|pre|dev) ]]; then
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-  # SERVER
-  server-build:
-    needs: decide
-    if: needs.decide.outputs.server_build == 'true'
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-            arch: amd64
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract semver
-        id: semver
-        run: echo "value=$(echo '${{ github.ref_name }}' | sed 's/^v//;s/-server$//')" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/server/Dockerfile
-          platforms: ${{ matrix.platform }}
-          provenance: false
-          build-args: BUILD_VERSION=${{ steps.semver.outputs.value }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-server,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=server-${{ matrix.arch }}
-          cache-to:   type=gha,mode=max,scope=server-${{ matrix.arch }}
-
-      - name: Export digest
-        run: |
-          mkdir -p /tmp/digests
-          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: digests-server-${{ matrix.arch }}
-          path: /tmp/digests/*
-          retention-days: 1
-
-  server-merge:
-    needs: server-build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: /tmp/digests
-          pattern: digests-server-*
-          merge-multiple: true
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Compute image tags
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-server
-          tags: |
-            type=match,pattern=v(.*)-server,group=1,enable=${{ github.ref_type == 'tag' }}
-            type=match,pattern=v(.*)-server,group=1,prefix=v,enable=${{ github.ref_type == 'tag' }}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
-
-      - name: Create manifest list
-        working-directory: /tmp/digests
-        run: |
-          mapfile -t tags < <(jq -cr '.tags[]' <<< "${DOCKER_METADATA_OUTPUT_JSON}")
-          tag_args=()
-          for t in "${tags[@]}"; do
-            tag_args+=("--tag" "$t")
-          done
-          refs=()
-          for f in *; do
-            refs+=("${REGISTRY}/${IMAGE_OWNER}/proxywi-server@$(cat "$f")")
-          done
-          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
-
-      - name: Inspect
-        run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-server:${{ steps.meta.outputs.version }}
-
-  # CLIENT
-  client-build:
-    needs: decide
-    if: needs.decide.outputs.client_build == 'true'
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-            arch: amd64
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract semver
-        id: semver
-        run: echo "value=$(echo '${{ github.ref_name }}' | sed 's/^v//;s/-client$//')" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/client/Dockerfile
-          platforms: ${{ matrix.platform }}
-          provenance: false
-          build-args: BUILD_VERSION=${{ steps.semver.outputs.value }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-client,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=client-${{ matrix.arch }}
-          cache-to:   type=gha,mode=max,scope=client-${{ matrix.arch }}
-
-      - name: Export digest
-        run: |
-          mkdir -p /tmp/digests
-          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: digests-client-${{ matrix.arch }}
-          path: /tmp/digests/*
-          retention-days: 1
-
-  client-merge:
-    needs: client-build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: /tmp/digests
-          pattern: digests-client-*
-          merge-multiple: true
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Compute image tags
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-client
-          tags: |
-            type=match,pattern=v(.*)-client,group=1,enable=${{ github.ref_type == 'tag' }}
-            type=match,pattern=v(.*)-client,group=1,prefix=v,enable=${{ github.ref_type == 'tag' }}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
-
-      - name: Create manifest list
-        working-directory: /tmp/digests
-        run: |
-          mapfile -t tags < <(jq -cr '.tags[]' <<< "${DOCKER_METADATA_OUTPUT_JSON}")
-          tag_args=()
-          for t in "${tags[@]}"; do
-            tag_args+=("--tag" "$t")
-          done
-          refs=()
-          for f in *; do
-            refs+=("${REGISTRY}/${IMAGE_OWNER}/proxywi-client@$(cat "$f")")
-          done
-          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
-
-      - name: Inspect
-        run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/proxywi-client:${{ steps.meta.outputs.version }}
-
-  publish-release:
-    name: 📦 Publish release
+    name: Resolve version and architectures
     runs-on: ubuntu-24.04
-    needs: [setup, server-merge, client-merge]
-    if: always() && github.event_name == 'push' && github.ref_type == 'tag' && (needs.server-merge.result == 'success' || needs.client-merge.result == 'success')
+    outputs:
+      images: ${{ steps.plan.outputs.images }}
+      commit: ${{ steps.commit.outputs.sha }}
+      short: ${{ steps.commit.outputs.short }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      archs: ${{ steps.plan.outputs.archs }}
+    steps:
+      - name: Resolve version and architectures
+        id: plan
+        env:
+          COMPONENT: ${{ inputs.component }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_ARCHS: ${{ inputs.architectures || '[amd64, arm64]' }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="${INPUT_TAG#refs/tags/}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          case "$VERSION" in
+            *-server|*-client) COMPONENT=${VERSION##*-}; VERSION=${VERSION%-*} ;;
+          esac
+          case "${COMPONENT:-both}" in
+            server) images='["server"]' ;;
+            client) images='["client"]' ;;
+            both) images='["server","client"]' ;;
+            *) exit 1 ;;
+          esac
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Malformed version '$VERSION' (expected X.Y.Z or X.Y.Z-suffix)"
+            exit 1
+          fi
+
+          ARCHS=$(python3 - "$INPUT_ARCHS" <<'PY'
+          import json, sys
+          raw = sys.argv[1].strip()
+          if not (raw.startswith('[') and raw.endswith(']')):
+              sys.exit('Expected a list such as [arm64, amd64]')
+          items = [item.strip() for item in raw[1:-1].split(',')]
+          allowed = {'amd64', 'arm64', '"amd64"', '"arm64"'}
+          arches = [item.strip('"') for item in items]
+          if not all(item in allowed for item in items) or len(set(arches)) != len(arches):
+              sys.exit('Expected distinct architectures: amd64 and/or arm64')
+          print(json.dumps(arches, separators=(',', ':')))
+          PY
+          )
+
+          case "$VERSION" in
+            *-*) PRERELEASE=true ;;
+            *)   PRERELEASE=false ;;
+          esac
+
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "archs=$ARCHS"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release plan"
+            echo ""
+            echo "- Tag: \`$TAG\`"
+            echo "- Version: \`$VERSION\`"
+            echo "- Architectures: \`$ARCHS\`"
+            echo "- Prerelease: \`$PRERELEASE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve release commit
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ steps.plan.outputs.tag }}
+          persist-credentials: false
+      - id: commit
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/proxywi-${{ matrix.image }}
+    name: Build (${{ matrix.arch }})
+    needs: [setup, ci]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.setup.outputs.images) }}
+        arch: ${{ fromJSON(needs.setup.outputs.archs) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.setup.outputs.commit }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/${{ matrix.image }}/Dockerfile
+          build-args: BUILD_VERSION=${{ needs.setup.outputs.version }}
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
+
+      - name: Export digest
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/digests/${{ matrix.arch }}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.image }}-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    strategy:
+      matrix:
+        image: ${{ fromJSON(needs.setup.outputs.images) }}
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/proxywi-${{ matrix.image }}
+    name: Create multi-arch manifest
+    needs: [setup, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.setup.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.setup.outputs.version }},enable=${{ needs.setup.outputs.prerelease == 'false' }}
+            type=raw,value=v${{ needs.setup.outputs.version }}
+            type=raw,value=sha-${{ needs.setup.outputs.short }}
+            type=raw,value=latest,enable=${{ needs.setup.outputs.prerelease == 'false' }}
+
+      - name: Create and push manifest
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          refs=()
+          for arch in *; do
+            digest=$(cat "$arch")
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            refs+=("$IMAGE@$digest")
+            while read -r tag; do
+              docker buildx imagetools create -t "$tag-$arch" "$IMAGE@$digest"
+            done < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          done
+          args=()
+          while IFS= read -r tag; do args+=("-t" "$tag"); done < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          while read -r annotation; do args+=(--annotation "index:$annotation"); done < <(jq -r '(.annotations // [])[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          docker buildx imagetools create "${args[@]}" "${refs[@]}"
+
+      - name: Verify manifest
+        run: docker buildx imagetools inspect "$IMAGE:$VERSION"
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+
+  release:
+    name: Publish release
+    needs: [setup, merge]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
-      models: read
-
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
+          ref: ${{ needs.setup.outputs.commit }}
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: 📋 Get commits since last tag
+      - name: Collect commits since previous tag
         id: commits
         run: |
+          set -euo pipefail
           PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -z "$PREVIOUS_TAG" ]; then
             LOG=$(git log --pretty=format:"%s (%h)" HEAD)
@@ -317,54 +287,53 @@ jobs:
             LOG=$(git log --pretty=format:"%s (%h)" "$PREVIOUS_TAG"..HEAD)
           fi
           {
-            echo "LOG<<EOF"
+            DELIM=$(openssl rand -hex 24)
+            echo "log<<$DELIM"
             echo "$LOG"
-            echo "EOF"
+            echo "$DELIM"
           } >> "$GITHUB_OUTPUT"
 
-      - name: 🤖 Generate release notes
-        id: ai_notes
+      - name: Generate release notes
+        id: notes
         env:
-          LOG: ${{ steps.commits.outputs.LOG }}
+          LOG: ${{ steps.commits.outputs.log }}
           VERSION: ${{ needs.setup.outputs.version }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          for attempt in 1 2 3; do
-            RESPONSE=$(curl -s https://openrouter.ai/api/v1/chat/completions \
-              -H "Authorization: Bearer ${{ secrets.OPENROUTER_API_KEY }}" \
-              -H "Content-Type: application/json" \
-              -d "$(jq -n \
-                --arg version "$VERSION" \
-                --arg log "$LOG" \
-                '{
+          set -euo pipefail
+          NOTES=""
+          if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            for attempt in 1 2 3; do
+              RESPONSE=$(curl -sS https://openrouter.ai/api/v1/chat/completions \
+                -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+                -H "Content-Type: application/json" \
+                -d "$(jq -n --arg version "$VERSION" --arg log "$LOG" '{
                   model: "openrouter/free",
                   messages: [
-                    {
-                      role: "system",
-                      content: "You are a technical writer for open source projects. Generate polished, friendly release notes in English from a list of git commits. Group changes into sections using these emojis: 🚀 New Features, 🐛 Bug Fixes, ⚡ Improvements, 💥 Breaking Changes. Omit sections with no entries. Be concise and developer-friendly. Do not include a title or version header."
-                    },
-                    {
-                      role: "user",
-                      content: ("Generate release notes for version " + $version + " from these commits:\n" + $log)
-                    }
+                    {role: "system", content: "You are a technical writer for open source projects. Write concise release notes in English from a list of git commits. Group entries under these headings: New Features, Bug Fixes, Improvements, Breaking Changes. Omit empty sections. Do not add a title or version header."},
+                    {role: "user", content: ("Release notes for version " + $version + " from these commits:\n" + $log)}
                   ]
-                }')"
-            ) || RESPONSE=""
-            NOTES=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // ""' 2>/dev/null | sed '/^```/d')
-            case "$NOTES" in
-              ""|*"<|"*|*"<tool_call>"*) NOTES=""; echo "tentativa $attempt invalida, repetindo"; sleep 2 ;;
-              *) break ;;
-            esac
-          done
+                }')") || RESPONSE=""
+              NOTES=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // ""' 2>/dev/null | sed '/^```/d') || NOTES=""
+              case "$NOTES" in
+                ""|*"<tool_call>"*) NOTES=""; echo "Attempt $attempt returned no usable notes, retrying"; sleep 2 ;;
+                *) break ;;
+              esac
+            done
+          fi
           [ -n "$NOTES" ] || NOTES="$LOG"
-          echo "NOTES<<EOF" >> $GITHUB_OUTPUT
-          echo "$NOTES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            DELIM=$(openssl rand -hex 24)
+            echo "notes<<$DELIM"
+            echo "$NOTES"
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: 📝 Create release
-        uses: softprops/action-gh-release@v2
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
         with:
-          name: "🎉 ${{ needs.setup.outputs.version }}"
-          tag_name: ${{ needs.setup.outputs.version }}
-          body: ${{ steps.ai_notes.outputs.NOTES }}
+          name: "v${{ needs.setup.outputs.version }}"
+          tag_name: ${{ needs.setup.outputs.tag }}
+          body: ${{ steps.notes.outputs.notes }}
           draft: false
-          prerelease: ${{ needs.setup.outputs.prerelease }}
+          prerelease: ${{ needs.setup.outputs.prerelease == 'true' }}
